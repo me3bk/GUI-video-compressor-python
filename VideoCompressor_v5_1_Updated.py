@@ -1478,9 +1478,10 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
         if encoder_choice not in {"amf", "nvenc"}:
             encoder_choice = "nvenc"
         use_balanced_amf = (mode == "AV1 Balanced" and encoder_choice == "amf")
-        
-        # For NVENC/AMF modes or AV1 Balanced with AMD hardware, use adaptive plan
-        if mode in adaptive_modes or use_balanced_amf or use_amd_av1_preview:
+        use_compress_amf = (mode == "AV1 Compress" and encoder_choice == "amf")
+
+        # For NVENC/AMF modes or AV1 Balanced/Compress with AMD hardware, use adaptive plan
+        if mode in adaptive_modes or use_balanced_amf or use_compress_amf or use_amd_av1_preview:
             info_ext = ffprobe_info_extended(input_path)
             filters_for_est = smart_filters
             if filters_for_est is None:
@@ -1497,6 +1498,19 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
                 sharpening_profile,
                 encoder=encoder_choice
             )
+
+            # Apply AV1 Compress mode adjustments for accurate estimation
+            if mode == "AV1 Compress" and encoder_choice == "amf":
+                plan["params"]["cq"] = 31  # Higher CQ = more compression
+                if width >= 1920:
+                    plan["params"]["b_v"] = 1_900_000  # 1.9 Mbps for 1080p
+                    plan["params"]["maxrate"] = int(plan["params"]["b_v"] * 1.5)
+                    plan["params"]["bufsize"] = int(plan["params"]["maxrate"] * 2)
+                elif width >= 1280:
+                    plan["params"]["b_v"] = 1_200_000  # 1.2 Mbps for 720p
+                    plan["params"]["maxrate"] = int(plan["params"]["b_v"] * 1.5)
+                    plan["params"]["bufsize"] = int(plan["params"]["maxrate"] * 2)
+
             base_video_bitrate = estimate_output_from_params(info_ext, plan["params"]) * 8 / max(duration, 1)
             base_video_bitrate /= 1000  # Convert to kbps for consistency
             audio_bitrate = 192
@@ -3202,7 +3216,7 @@ class App:
         """Ensure AV1 Balanced remains the default unless the user picks something else."""
         current = (self.mode.get() or "").strip()
         valid_modes = {
-            "AV1 Ultra", "AV1 Balanced", "AV1 Fast",
+            "AV1 Ultra", "AV1 Balanced", "AV1 Compress", "AV1 Fast",
             "NVENC Ultra", "NVENC Balanced", "NVENC Fast"
         }
         if current and current in valid_modes:
