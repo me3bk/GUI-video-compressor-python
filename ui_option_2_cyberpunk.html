@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyberpunk UI - Video Compressor Pro v6.0</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background: #0a0014;
+            background-image:
+                repeating-linear-gradient(0deg, rgba(255, 0, 255, 0.03) 0px, transparent 1px, transparent 2px, rgba(255, 0, 255, 0.03) 3px),
+                repeating-linear-gradient(90deg, rgba(0, 255, 255, 0.03) 0px, transparent 1px, transparent 2px, rgba(0, 255, 255, 0.03) 3px);
+            color: #00ffff;
+            padding: 20px;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .scanline {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 255, 255, 0.03) 0px,
+                transparent 2px,
+                transparent 4px,
+                rgba(255, 0, 255, 0.03) 6px
+            );
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Glitch Animation */
+        @keyframes glitch {
+            0% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(-2px, -2px); }
+            60% { transform: translate(2px, 2px); }
+            80% { transform: translate(2px, -2px); }
+            100% { transform: translate(0); }
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, rgba(255, 0, 255, 0.2), rgba(0, 255, 255, 0.2));
+            border: 2px solid;
+            border-image: linear-gradient(45deg, #ff00ff, #00ffff, #ff00ff) 1;
+            padding: 30px;
+            margin-bottom: 30px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 0, 255, 0.3), transparent);
+            animation: sweep 3s linear infinite;
+        }
+
+        @keyframes sweep {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+
+        .header h1 {
+            font-size: 42px;
+            font-weight: 900;
+            letter-spacing: 6px;
+            text-transform: uppercase;
+            background: linear-gradient(45deg, #ff00ff, #00ffff, #ff00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px rgba(255, 0, 255, 0.8), 0 0 60px rgba(0, 255, 255, 0.8);
+            position: relative;
+            z-index: 1;
+        }
+
+        .header .subtitle {
+            color: #00ffff;
+            font-size: 14px;
+            letter-spacing: 3px;
+            margin-top: 10px;
+            text-shadow: 0 0 20px rgba(0, 255, 255, 0.8);
+        }
+
+        /* Panel Styling */
+        .panel {
+            background: rgba(10, 0, 20, 0.9);
+            border: 2px solid;
+            border-image: linear-gradient(135deg, #ff00ff, #00ffff) 1;
+            padding: 25px;
+            margin-bottom: 20px;
+            position: relative;
+            box-shadow:
+                0 0 20px rgba(255, 0, 255, 0.3),
+                inset 0 0 20px rgba(0, 255, 255, 0.1);
+        }
+
+        .panel::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, #ff00ff, #00ffff);
+            opacity: 0;
+            z-index: -1;
+            transition: opacity 0.3s;
+        }
+
+        .panel:hover::before {
+            opacity: 0.1;
+        }
+
+        .panel-header {
+            color: #ff00ff;
+            font-size: 18px;
+            font-weight: bold;
+            letter-spacing: 3px;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            text-shadow: 0 0 20px rgba(255, 0, 255, 0.8);
+            position: relative;
+            padding-bottom: 10px;
+        }
+
+        .panel-header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100px;
+            height: 2px;
+            background: linear-gradient(90deg, #ff00ff, transparent);
+            box-shadow: 0 0 10px #ff00ff;
+        }
+
+        /* Input Fields */
+        input[type="text"], select {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #00ffff;
+            color: #00ffff;
+            padding: 12px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+        }
+
+        input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #ff00ff;
+            box-shadow: 0 0 20px rgba(255, 0, 255, 0.5);
+        }
+
+        /* Buttons */
+        .btn {
+            background: linear-gradient(135deg, #ff00ff, #ff00aa);
+            color: white;
+            border: 2px solid #ff00ff;
+            padding: 12px 30px;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-size: 12px;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .btn:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .btn:hover {
+            box-shadow: 0 0 30px rgba(255, 0, 255, 0.8);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #00ffff, #0099ff);
+            border-color: #00ffff;
+        }
+
+        .btn-secondary:hover {
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.8);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ff0066, #cc0000);
+            border-color: #ff0066;
+        }
+
+        /* Grid Layout */
+        .grid-2col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .grid-3col {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+
+        /* Video Info Cards */
+        .info-card {
+            background: linear-gradient(135deg, rgba(255, 0, 255, 0.1), rgba(0, 255, 255, 0.1));
+            border: 1px solid #ff00ff;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .info-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+            animation: shine 3s linear infinite;
+        }
+
+        @keyframes shine {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+
+        .info-card-label {
+            font-size: 11px;
+            color: #00ffff;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .info-card-value {
+            font-size: 24px;
+            color: #ff00ff;
+            font-weight: bold;
+            text-shadow: 0 0 20px rgba(255, 0, 255, 0.8);
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #00ffff;
+            height: 60px;
+            position: relative;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #ff00ff, #00ffff, #ff00ff);
+            background-size: 200% 100%;
+            height: 100%;
+            width: 65%;
+            animation: gradient-flow 3s linear infinite;
+            position: relative;
+        }
+
+        @keyframes gradient-flow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: repeating-linear-gradient(
+                90deg,
+                transparent 0px,
+                rgba(255, 255, 255, 0.1) 10px,
+                transparent 20px
+            );
+            animation: scroll 1s linear infinite;
+        }
+
+        @keyframes scroll {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(20px); }
+        }
+
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            text-shadow:
+                0 0 10px #ff00ff,
+                0 0 20px #00ffff,
+                0 0 30px #ff00ff;
+            letter-spacing: 3px;
+        }
+
+        /* Stats Display */
+        .stat-box {
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #00ffff;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+        }
+
+        .stat-box::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            height: 4px;
+            background: linear-gradient(90deg, #ff00ff, #00ffff);
+            animation: pulse 2s linear infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #00ffff;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            color: #ff00ff;
+            font-weight: bold;
+            margin-top: 10px;
+            text-shadow: 0 0 20px rgba(255, 0, 255, 0.8);
+        }
+
+        /* Queue List */
+        .queue-list {
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #00ffff;
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        .queue-item {
+            background: linear-gradient(90deg, rgba(255, 0, 255, 0.1), transparent);
+            border-left: 4px solid #ff00ff;
+            padding: 15px;
+            margin-bottom: 10px;
+            transition: all 0.3s;
+        }
+
+        .queue-item:hover {
+            background: linear-gradient(90deg, rgba(255, 0, 255, 0.2), transparent);
+            border-left-color: #00ffff;
+            transform: translateX(5px);
+        }
+
+        .queue-item-name {
+            color: #00ffff;
+            font-weight: bold;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+
+        .queue-item-details {
+            color: #ff00ff;
+            font-size: 11px;
+            opacity: 0.8;
+        }
+
+        .queue-status {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #ff00ff;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            margin-top: 8px;
+            text-shadow: none;
+        }
+
+        /* Log Area */
+        .log-area {
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #ff00ff;
+            padding: 15px;
+            height: 180px;
+            overflow-y: auto;
+            font-size: 11px;
+            color: #00ffff;
+            font-family: 'Courier New', monospace;
+        }
+
+        .log-area::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        .log-area::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.8);
+        }
+
+        .log-area::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #ff00ff, #00ffff);
+        }
+
+        /* Control Panel */
+        .control-panel {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+            padding: 20px 0;
+        }
+
+        /* Checkbox */
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin: 15px 0;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #00ffff;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #ff00ff;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .grid-2col {
+                grid-template-columns: 1fr;
+            }
+            .grid-3col {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .grid-3col {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="scanline"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>⚡ VIDEO COMPRESSOR PRO ⚡</h1>
+            <div class="subtitle">v6.0 CYBERPUNK EDITION // ADAPTIVE HEVC/AV1 COMPRESSION</div>
+        </div>
+
+        <!-- Current Video Info -->
+        <div class="grid-3col">
+            <div class="info-card">
+                <div class="info-card-label">Video Name</div>
+                <div class="info-card-value" style="font-size: 14px;">movie_2024_1080p.mp4</div>
+            </div>
+            <div class="info-card">
+                <div class="info-card-label">Resolution</div>
+                <div class="info-card-value">1920×1080p</div>
+            </div>
+            <div class="info-card">
+                <div class="info-card-label">Duration</div>
+                <div class="info-card-value">00:28:15</div>
+            </div>
+        </div>
+
+        <div class="grid-2col" style="margin-top: 20px;">
+            <div class="info-card">
+                <div class="info-card-label">Original Size</div>
+                <div class="info-card-value">842.5 MB</div>
+            </div>
+            <div class="info-card">
+                <div class="info-card-label">Estimated Output</div>
+                <div class="info-card-value" style="color: #00ffff;">485.2 MB (-42.4%)</div>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="panel">
+            <div class="panel-header">⚡ ENCODING PROGRESS</div>
+            <div class="progress-container">
+                <div class="progress-fill"></div>
+                <div class="progress-text">65.3%</div>
+            </div>
+
+            <div class="grid-3col" style="margin-top: 20px;">
+                <div class="stat-box">
+                    <div class="stat-label">ETA</div>
+                    <div class="stat-value" style="font-size: 24px;">08:24</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Speed</div>
+                    <div class="stat-value">24.8 fps</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Elapsed</div>
+                    <div class="stat-value" style="font-size: 24px;">15:32</div>
+                </div>
+            </div>
+
+            <div class="grid-2col" style="margin-top: 15px;">
+                <div class="stat-box">
+                    <div class="stat-label">CPU Usage</div>
+                    <div class="stat-value">45%</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">GPU Usage</div>
+                    <div class="stat-value">82%</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="grid-2col">
+            <!-- Left Column -->
+            <div>
+                <!-- File Selection -->
+                <div class="panel">
+                    <div class="panel-header">⚡ FILE SELECTION</div>
+                    <label style="color: #00ffff; font-size: 11px; display: block; margin-bottom: 5px;">INPUT VIDEO</label>
+                    <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                        <input type="text" value="movie_2024_1080p_h264_high_bitrate.mp4" readonly style="flex: 1;">
+                        <button class="btn btn-secondary">BROWSE</button>
+                        <button class="btn btn-secondary">+ BATCH</button>
+                    </div>
+
+                    <label style="color: #00ffff; font-size: 11px; display: block; margin-bottom: 5px;">OUTPUT VIDEO</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" value="movie_2024_1080p_hevc_compressed.mp4" readonly style="flex: 1;">
+                        <button class="btn btn-secondary">BROWSE</button>
+                    </div>
+                </div>
+
+                <!-- Encoding Settings -->
+                <div class="panel">
+                    <div class="panel-header">⚡ ENCODING CONFIGURATION</div>
+                    <label style="color: #00ffff; font-size: 11px; display: block; margin-bottom: 5px;">ENCODING MODE</label>
+                    <select>
+                        <option>AV1 Ultra - CRF 22, P4 (Cinema Quality)</option>
+                        <option selected>AV1 Balanced - CRF 25, P5 (Best Balance)</option>
+                        <option>AV1 Fast - CRF 28, P8 (Quick Compression)</option>
+                        <option>NVENC Ultra - HEVC P7, HQ (NVIDIA GPU)</option>
+                        <option>NVENC Balanced - HEVC P5 (NVIDIA GPU)</option>
+                        <option>NVENC Adaptive - Intelligent Encoding</option>
+                    </select>
+
+                    <label style="color: #00ffff; font-size: 11px; display: block; margin-bottom: 5px;">HARDWARE ENCODER</label>
+                    <select>
+                        <option selected>Auto (detect GPU)</option>
+                        <option>NVIDIA NVENC</option>
+                        <option>AMD AMF</option>
+                        <option>CPU (Software)</option>
+                    </select>
+
+                    <label style="color: #00ffff; font-size: 11px; display: block; margin-bottom: 5px;">RESOLUTION</label>
+                    <select>
+                        <option selected>Same as source</option>
+                        <option>1080p (1920×1080)</option>
+                        <option>720p (1280×720)</option>
+                        <option>480p (854×480)</option>
+                    </select>
+
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked> Auto-select best mode
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked> Keep HDR/10-bit
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox"> Two-pass encoding
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox"> Skip if savings &lt;5%
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox"> Shutdown after finish
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column - Queue -->
+            <div>
+                <div class="panel" style="height: 100%;">
+                    <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>⚡ BATCH QUEUE (4 ITEMS)</span>
+                        <button class="btn btn-danger" style="padding: 8px 20px;">CLEAR</button>
+                    </div>
+                    <div class="queue-list">
+                        <div class="queue-item">
+                            <div class="queue-item-name">video_01_high_quality.mp4</div>
+                            <div class="queue-item-details">1920×1080 • 1.2 GB • 00:45:32</div>
+                            <span class="queue-status" style="background: #00ffff; color: #000;">✓ COMPLETED</span>
+                        </div>
+                        <div class="queue-item" style="border-left-color: #00ffff;">
+                            <div class="queue-item-name">movie_2024_1080p_h264.mp4</div>
+                            <div class="queue-item-details">1920×1080 • 842 MB • 00:28:15</div>
+                            <span class="queue-status" style="background: linear-gradient(45deg, #ff00ff, #00ffff); animation: pulse 1s infinite;">◉ ENCODING</span>
+                        </div>
+                        <div class="queue-item">
+                            <div class="queue-item-name">vacation_footage_4k.mp4</div>
+                            <div class="queue-item-details">3840×2160 • 3.5 GB • 01:15:22</div>
+                            <span class="queue-status" style="background: #666; color: #fff;">⏸ PENDING</span>
+                        </div>
+                        <div class="queue-item">
+                            <div class="queue-item-name">tutorial_recording.mp4</div>
+                            <div class="queue-item-details">1280×720 • 512 MB • 00:18:45</div>
+                            <span class="queue-status" style="background: #666; color: #fff;">⏸ PENDING</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" style="width: 100%; margin-top: 15px;">REMOVE SELECTED</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <button class="btn">⚡ START ENCODING ⚡</button>
+            <button class="btn btn-danger">⚡ CANCEL ⚡</button>
+            <button class="btn btn-secondary">⚡ PREVIEW ⚡</button>
+            <button class="btn btn-secondary">⚡ VIEW LOG ⚡</button>
+            <button class="btn btn-secondary">⚡ SETTINGS ⚡</button>
+            <button class="btn btn-secondary">⚡ CLEAR ⚡</button>
+        </div>
+
+        <!-- Log Area -->
+        <div class="panel">
+            <div class="panel-header">⚡ SYSTEM LOG</div>
+            <div class="log-area">
+                <div style="color: #00ffff;">[12:34:15] &gt;&gt; FFprobe analysis complete: 1920×1080, 25.0 fps, H.264, 5.2 Mbps</div>
+                <div style="color: #ff00ff;">[12:34:16] &gt;&gt; Film grain detected (strength: 0.68) - preserving texture</div>
+                <div style="color: #00ffff;">[12:34:16] &gt;&gt; AMD Codec: av1_amf</div>
+                <div style="color: #ff00ff;">[12:34:16] &gt;&gt; RDNA 4: AV1 B-frames enabled (4 B-frames, middle ref)</div>
+                <div style="color: #00ffff;">[12:34:17] &gt;&gt; Path=default | CQ=29 | target=2500000 | maxrate=4500000</div>
+                <div style="color: #ff00ff;">[12:34:17] &gt;&gt; Filter: hqdn3d=0.28:0.28:1.2:1.2 + unsharp=la=0.22:ca=0.0</div>
+                <div style="color: #00ffff;">[12:34:18] &gt;&gt; Encoding started: frame=0 fps=0.0 size=0kB</div>
+                <div style="color: #ff00ff;">[12:34:20] &gt;&gt; frame=50 fps=24.8 size=2048kB time=00:00:02.00</div>
+                <div style="color: #00ffff;">[12:34:22] &gt;&gt; frame=150 fps=25.2 size=6144kB speed=1.01x</div>
+                <div style="color: #ff00ff;">[12:34:24] &gt;&gt; frame=300 fps=24.9 size=12288kB speed=1.00x</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
