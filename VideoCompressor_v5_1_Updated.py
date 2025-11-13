@@ -351,8 +351,23 @@ HAS_LIBPLACEBO = check_codec_support("libplacebo")  # For best HDR tone mapping
 
 def detect_amd_rdna4() -> bool:
     """Detect AMD RDNA 4 GPU for enhanced AV1 features (B-frames)"""
+    # Method 1: Windows - Check GPU name via wmic
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["wmic", "path", "win32_VideoController", "get", "name"],
+                capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0:
+                output = result.stdout.lower()
+                # RDNA 4 = RX 9000 series (9070, 9090, etc.)
+                if any(x in output for x in ["rx 9", "rx9", "radeon 9", "rdna4", "rdna 4"]):
+                    return True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    # Method 2: Linux - Try rocm-smi
     try:
-        # Try rocm-smi first (AMD official tool)
         result = subprocess.run(
             ["rocm-smi", "--showproductname"],
             capture_output=True, text=True, timeout=2
@@ -365,7 +380,7 @@ def detect_amd_rdna4() -> bool:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
-    # Fallback: Check via AMF capabilities (RDNA 4 supports AV1 B-frames)
+    # Method 3: Check via AMF B-frame support (RDNA 4+ has B-frames for AV1)
     if HAS_AV1_AMF and FFMPEG:
         try:
             # Test if B-frames are supported for AV1 AMF
@@ -373,8 +388,9 @@ def detect_amd_rdna4() -> bool:
                 [FFMPEG, "-hide_banner", "-h", "encoder=av1_amf"],
                 capture_output=True, text=True, timeout=3
             )
-            # RDNA 4 adds b_ref_mode and bf options to AV1
-            if "bf" in result.stdout and "b_ref_mode" in result.stdout:
+            # RDNA 4 adds bf option to AV1 (older cards don't have this)
+            # Check for "bf" option specifically for B-frames
+            if "-bf" in result.stdout or "B Picture Pattern" in result.stdout:
                 return True
         except (subprocess.TimeoutExpired, subprocess.SubprocessError):
             pass

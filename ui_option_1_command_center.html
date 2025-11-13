@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Command Center UI - Video Compressor Pro v6.0</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background: linear-gradient(135deg, #0a0e14 0%, #141920 100%);
+            color: #00ff88;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #1a2332 0%, #0f1419 100%);
+            border: 2px solid #00ff88;
+            border-radius: 0;
+            clip-path: polygon(0 0, 100% 0, 98% 100%, 0 100%);
+            padding: 20px 30px;
+            margin-bottom: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00ff88, transparent);
+            animation: scan 3s linear infinite;
+        }
+
+        @keyframes scan {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(100%); }
+        }
+
+        .header h1 {
+            font-size: 28px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            text-shadow: 0 0 20px #00ff88;
+        }
+
+        .header .subtitle {
+            color: #00cc66;
+            font-size: 12px;
+            letter-spacing: 2px;
+            margin-top: 5px;
+        }
+
+        /* Grid Layout */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        /* Panel styling */
+        .panel {
+            background: linear-gradient(135deg, #1a2332 0%, #0f1419 100%);
+            border: 1px solid #00ff88;
+            border-radius: 0;
+            padding: 20px;
+            position: relative;
+        }
+
+        .panel::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: -1px;
+            right: -1px;
+            height: 40px;
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.1), transparent);
+            pointer-events: none;
+        }
+
+        .panel-header {
+            color: #00ff88;
+            font-size: 14px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(0, 255, 136, 0.3);
+            text-transform: uppercase;
+        }
+
+        /* File Selection */
+        .file-input-group {
+            margin-bottom: 15px;
+        }
+
+        .file-input-group label {
+            display: block;
+            color: #00cc66;
+            font-size: 11px;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        .input-with-btn {
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-with-btn input {
+            flex: 1;
+            background: #0a0e14;
+            border: 1px solid #00ff88;
+            color: #00ff88;
+            padding: 10px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #00ff88 0%, #00cc66 100%);
+            color: #0a0e14;
+            border: none;
+            padding: 10px 20px;
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 11px;
+            transition: all 0.3s;
+            clip-path: polygon(5% 0, 100% 0, 95% 100%, 0 100%);
+        }
+
+        .btn:hover {
+            background: linear-gradient(135deg, #00ffaa 0%, #00ff88 100%);
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #334455 0%, #223344 100%);
+            color: #00ff88;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
+            color: white;
+        }
+
+        /* Dropdown */
+        select {
+            width: 100%;
+            background: #0a0e14;
+            border: 1px solid #00ff88;
+            color: #00ff88;
+            padding: 10px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+
+        /* Checkbox */
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin: 10px 0;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #00cc66;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #00ff88;
+        }
+
+        /* Current Video Info (Hexagonal cards) */
+        .video-info-cards {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .info-card {
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.1), transparent);
+            border: 1px solid #00ff88;
+            clip-path: polygon(10% 0, 100% 0, 90% 100%, 0 100%);
+            padding: 15px 20px;
+            position: relative;
+        }
+
+        .info-card-label {
+            font-size: 10px;
+            color: #00cc66;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .info-card-value {
+            font-size: 18px;
+            color: #00ff88;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        /* Progress Bar */
+        .progress-section {
+            margin: 20px 0;
+        }
+
+        .progress-bar-container {
+            background: #0a0e14;
+            border: 2px solid #00ff88;
+            height: 40px;
+            position: relative;
+            overflow: hidden;
+            clip-path: polygon(0 0, 100% 0, 98% 100%, 0 100%);
+        }
+
+        .progress-bar-fill {
+            background: linear-gradient(90deg, #00ff88, #00cc66, #00ff88);
+            background-size: 200% 100%;
+            height: 100%;
+            width: 65%;
+            animation: shimmer 2s linear infinite;
+            position: relative;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+
+        .progress-bar-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 16px;
+            font-weight: bold;
+            color: #00ff88;
+            text-shadow: 0 0 10px #000;
+            letter-spacing: 2px;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-box {
+            background: #0a0e14;
+            border: 1px solid #00ff88;
+            padding: 15px;
+            text-align: center;
+            clip-path: polygon(5% 0, 100% 0, 95% 100%, 0 100%);
+        }
+
+        .stat-box-label {
+            font-size: 10px;
+            color: #00cc66;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .stat-box-value {
+            font-size: 24px;
+            color: #00ff88;
+            font-weight: bold;
+            margin-top: 5px;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+
+        /* Queue List */
+        .queue-list {
+            background: #0a0e14;
+            border: 1px solid #00ff88;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .queue-item {
+            background: rgba(0, 255, 136, 0.05);
+            border-left: 3px solid #00ff88;
+            padding: 10px;
+            margin-bottom: 8px;
+            font-size: 11px;
+            clip-path: polygon(0 0, 100% 0, 99% 100%, 0 100%);
+        }
+
+        .queue-item:hover {
+            background: rgba(0, 255, 136, 0.1);
+        }
+
+        .queue-item-name {
+            color: #00ff88;
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+
+        .queue-item-details {
+            color: #00cc66;
+            font-size: 10px;
+        }
+
+        .queue-item-status {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #00ff88;
+            color: #0a0e14;
+            font-size: 9px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            margin-top: 5px;
+        }
+
+        /* Control Buttons */
+        .control-panel {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+
+        .control-panel .btn {
+            min-width: 120px;
+        }
+
+        /* Log Area */
+        .log-area {
+            background: #0a0e14;
+            border: 1px solid #00ff88;
+            padding: 15px;
+            height: 150px;
+            overflow-y: auto;
+            font-size: 11px;
+            color: #00cc66;
+            font-family: 'Consolas', monospace;
+        }
+
+        .log-area::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .log-area::-webkit-scrollbar-track {
+            background: #0a0e14;
+        }
+
+        .log-area::-webkit-scrollbar-thumb {
+            background: #00ff88;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>◢ VIDEO COMPRESSOR PRO v6.0 ◣</h1>
+            <div class="subtitle">▶ COMMAND CENTER INTERFACE ◀ ADAPTIVE HEVC/AV1 COMPRESSION</div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Left Column -->
+            <div>
+                <!-- File Selection Panel -->
+                <div class="panel">
+                    <div class="panel-header">▶ FILE OPERATIONS</div>
+                    <div class="file-input-group">
+                        <label>▸ Input Video</label>
+                        <div class="input-with-btn">
+                            <input type="text" value="movie_2024_1080p_h264_high_bitrate.mp4" readonly>
+                            <button class="btn btn-secondary">BROWSE</button>
+                            <button class="btn btn-secondary">+ BATCH</button>
+                        </div>
+                    </div>
+                    <div class="file-input-group">
+                        <label>▸ Output Video</label>
+                        <div class="input-with-btn">
+                            <input type="text" value="movie_2024_1080p_hevc_compressed.mp4" readonly>
+                            <button class="btn btn-secondary">BROWSE</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Current Video Info -->
+                <div class="panel">
+                    <div class="panel-header">▶ CURRENT VIDEO ANALYSIS</div>
+                    <div class="video-info-cards">
+                        <div class="info-card">
+                            <div class="info-card-label">Video Name</div>
+                            <div class="info-card-value" style="font-size: 14px;">movie_2024_1080p.mp4</div>
+                        </div>
+                        <div class="info-card">
+                            <div class="info-card-label">Resolution</div>
+                            <div class="info-card-value">1920×1080p</div>
+                        </div>
+                        <div class="info-card">
+                            <div class="info-card-label">Original Size</div>
+                            <div class="info-card-value">842.5 MB</div>
+                        </div>
+                        <div class="info-card">
+                            <div class="info-card-label">Estimated Output</div>
+                            <div class="info-card-value" style="color: #00ffaa;">485.2 MB</div>
+                        </div>
+                    </div>
+                    <div style="text-align: center; margin-top: 10px;">
+                        <span style="color: #00ff88; font-size: 18px; font-weight: bold;">◢ SIZE REDUCTION: 42.4% ◣</span>
+                    </div>
+                </div>
+
+                <!-- Encoding Configuration -->
+                <div class="panel">
+                    <div class="panel-header">▶ ENCODING CONFIGURATION</div>
+                    <label style="color: #00cc66; font-size: 11px; display: block; margin-bottom: 5px;">▸ ENCODING MODE</label>
+                    <select>
+                        <option>AV1 Ultra - CRF 22, P4 (Cinema Quality)</option>
+                        <option selected>AV1 Balanced - CRF 25, P5 (Best Balance)</option>
+                        <option>AV1 Fast - CRF 28, P8 (Quick Compression)</option>
+                        <option>NVENC Ultra - HEVC P7, HQ (NVIDIA GPU)</option>
+                        <option>NVENC Balanced - HEVC P5 (NVIDIA GPU)</option>
+                        <option>NVENC Adaptive - Intelligent Encoding</option>
+                    </select>
+
+                    <label style="color: #00cc66; font-size: 11px; display: block; margin-bottom: 5px; margin-top: 15px;">▸ HARDWARE ENCODER</label>
+                    <select>
+                        <option selected>Auto (detect GPU)</option>
+                        <option>NVIDIA NVENC</option>
+                        <option>AMD AMF</option>
+                        <option>CPU (Software)</option>
+                    </select>
+
+                    <label style="color: #00cc66; font-size: 11px; display: block; margin-bottom: 5px; margin-top: 15px;">▸ RESOLUTION</label>
+                    <select>
+                        <option selected>Same as source</option>
+                        <option>1080p (1920×1080)</option>
+                        <option>720p (1280×720)</option>
+                        <option>480p (854×480)</option>
+                    </select>
+
+                    <div class="checkbox-group" style="margin-top: 15px;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked> Auto-select best mode
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked> Keep HDR/10-bit
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox"> Two-pass encoding
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox"> Skip if savings &lt;5%
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox"> Shutdown after finish
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Progress Section -->
+                <div class="panel">
+                    <div class="panel-header">▶ ENCODING PROGRESS</div>
+                    <div class="progress-section">
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill"></div>
+                            <div class="progress-bar-text">65.3% COMPLETE</div>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-box-label">ETA</div>
+                            <div class="stat-box-value" style="font-size: 18px;">08:24</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-box-label">Speed</div>
+                            <div class="stat-box-value">24.8 fps</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-box-label">CPU</div>
+                            <div class="stat-box-value">45%</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-box-label">GPU</div>
+                            <div class="stat-box-value">82%</div>
+                        </div>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 10px;">
+                        <span style="color: #00ff88; font-size: 14px; letter-spacing: 2px;">◢ STATUS: ENCODING IN PROGRESS ◣</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div>
+                <!-- Queue Panel -->
+                <div class="panel" style="height: 100%;">
+                    <div class="panel-header" style="display: flex; justify-content: space-between;">
+                        <span>▶ BATCH QUEUE (3 ITEMS)</span>
+                        <button class="btn btn-danger" style="padding: 5px 15px; min-width: auto;">CLEAR ALL</button>
+                    </div>
+                    <div class="queue-list">
+                        <div class="queue-item">
+                            <div class="queue-item-name">video_01_high_quality.mp4</div>
+                            <div class="queue-item-details">1080p • 1.2 GB • 00:45:32</div>
+                            <span class="queue-item-status">✓ COMPLETED</span>
+                        </div>
+                        <div class="queue-item" style="border-left-color: #00ffaa;">
+                            <div class="queue-item-name">movie_2024_1080p_h264.mp4</div>
+                            <div class="queue-item-details">1080p • 842 MB • 00:28:15</div>
+                            <span class="queue-item-status" style="background: #00ffaa;">◉ ENCODING</span>
+                        </div>
+                        <div class="queue-item" style="border-left-color: #666;">
+                            <div class="queue-item-name">vacation_footage_4k.mp4</div>
+                            <div class="queue-item-details">2160p • 3.5 GB • 01:15:22</div>
+                            <span class="queue-item-status" style="background: #666;">⏸ PENDING</span>
+                        </div>
+                        <div class="queue-item" style="border-left-color: #666;">
+                            <div class="queue-item-name">tutorial_recording.mp4</div>
+                            <div class="queue-item-details">720p • 512 MB • 00:18:45</div>
+                            <span class="queue-item-status" style="background: #666;">⏸ PENDING</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" style="width: 100%; margin-top: 10px;">REMOVE SELECTED</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="panel">
+            <div class="control-panel">
+                <button class="btn">◢ START ENCODING ◣</button>
+                <button class="btn btn-danger">◢ CANCEL ◣</button>
+                <button class="btn btn-secondary">◢ PREVIEW ◣</button>
+                <button class="btn btn-secondary">◢ VIEW LOG ◣</button>
+                <button class="btn btn-secondary">◢ SETTINGS ◣</button>
+                <button class="btn btn-secondary">◢ CLEAR ◣</button>
+            </div>
+        </div>
+
+        <!-- Log Area -->
+        <div class="panel">
+            <div class="panel-header">▶ SYSTEM LOG</div>
+            <div class="log-area">
+                <div>[12:34:15] ▸ FFprobe analysis complete: 1920×1080, 25.0 fps, H.264, 5.2 Mbps</div>
+                <div>[12:34:16] ▸ Film grain detected (strength: 0.68) - preserving texture</div>
+                <div>[12:34:16] ▸ AMD Codec: av1_amf</div>
+                <div>[12:34:16] ▸ RDNA 4: AV1 B-frames enabled (4 B-frames, middle ref)</div>
+                <div>[12:34:17] ▸ Path=default | CQ=29 | target=2500000 | maxrate=4500000 | bufsize=9000000</div>
+                <div>[12:34:17] ▸ Filter profile 'balanced': hqdn3d=0.28:0.28:1.2:1.2 + unsharp=la=0.22:ca=0.0</div>
+                <div>[12:34:18] ▸ Encoding started: frame=0 fps=0.0 size=0kB time=00:00:00.00 bitrate=N/A</div>
+                <div>[12:34:20] ▸ frame=50 fps=24.8 size=2048kB time=00:00:02.00 bitrate=8192.0kbits/s speed=0.99x</div>
+                <div>[12:34:22] ▸ frame=150 fps=25.2 size=6144kB time=00:00:06.00 bitrate=8388.6kbits/s speed=1.01x</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
