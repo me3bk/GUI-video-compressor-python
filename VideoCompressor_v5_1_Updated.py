@@ -771,21 +771,24 @@ def normalize_mode(mode: str) -> str:
     # Handle exact matches first (case-insensitive)
     valid_modes = {
         "av1 ultra": "AV1 Ultra",
-        "av1 balanced": "AV1 Balanced", 
+        "av1 balanced": "AV1 Balanced",
+        "av1 compress": "AV1 Compress",
         "av1 fast": "AV1 Fast",
         "nvenc ultra": "NVENC Ultra",
         "nvenc balanced": "NVENC Balanced",
         "nvenc fast": "NVENC Fast",
         "nvenc adaptive": "NVENC Adaptive"
     }
-    
+
     if mode_lower in valid_modes:
         return valid_modes[mode_lower]
-    
+
     # Handle legacy mode names and variants
     if "av1" in mode_lower:
         if "ultra" in mode_lower:
             return "AV1 Ultra"
+        elif "compress" in mode_lower:
+            return "AV1 Compress"
         elif "fast" in mode_lower:
             return "AV1 Fast"
         else:
@@ -1574,6 +1577,7 @@ def get_smart_audio_bitrate(input_path: str, mode: str) -> Tuple[str, str]:
             bitrate_map = {
                 "AV1 Ultra": "192k",
                 "AV1 Balanced": "160k",
+                "AV1 Compress": "128k",
                 "AV1 Fast": "128k",
                 "NVENC Ultra": "192k",
                 "NVENC Balanced": "160k",
@@ -1589,6 +1593,7 @@ def get_smart_audio_bitrate(input_path: str, mode: str) -> Tuple[str, str]:
         fallback_map = {
             "AV1 Ultra": "192k",
             "AV1 Balanced": "160k",
+            "AV1 Compress": "128k",
             "AV1 Fast": "128k",
             "NVENC Ultra": "160k",
             "NVENC Balanced": "160k",
@@ -2332,6 +2337,23 @@ class EncodingPresets:
             "-usage", "transcoding",
         ]
         
+        # Override params for AV1 Compress mode (aggressive compression)
+        is_compress_mode = "compress" in mode.lower()
+        if is_compress_mode and amf_codec == "av1_amf":
+            # Aggressive compression: Higher CQ + Lower bitrate
+            params["cq"] = 31  # Higher CQ = more compression
+            # Reduce bitrate by ~15-20% for 1080p
+            if source_width >= 1920:
+                params["b_v"] = 1_900_000  # 1.9 Mbps (was 2.3 Mbps)
+                params["maxrate"] = int(params["b_v"] * 1.5)  # Looser maxrate for complex scenes
+                params["bufsize"] = int(params["maxrate"] * 2)
+            elif source_width >= 1280:
+                params["b_v"] = 1_200_000  # 1.2 Mbps
+                params["maxrate"] = int(params["b_v"] * 1.5)
+                params["bufsize"] = int(params["maxrate"] * 2)
+            if user_log is not None:
+                user_log.append(f"AV1 Compress: Aggressive mode - CQ={params['cq']}, target={params['b_v']//1000}kbps")
+
         # Pure CQ mode or constrained VBR
         if ENABLE_PURE_CQ_MODE and amf_codec != "av1_amf":
             # Pure CQ for HEVC/H.264 (AV1 needs bitrate target)
@@ -2360,32 +2382,17 @@ class EncodingPresets:
 
         # RDNA 4 OPTIMIZATIONS: AV1 B-frames and enhanced features
         if amf_codec == "av1_amf" and HAS_AMD_RDNA4:
-            # Check if mode is "AV1 Balanced" for compression-focused settings
-            is_balanced_mode = "balanced" in mode.lower()
-
-            if is_balanced_mode:
-                # AV1 Balanced: Compression-focused (smaller files)
-                cmd.extend([
-                    "-bf", "3",                          # B-frames support (RDNA 4+, max=3)
-                    "-preanalysis", "1",                 # Pre-analysis pass
-                    "-aq_mode", "caq",                   # Context Adaptive Quantization
-                    "-pa_caq_strength", "low",           # Low CAQ for smaller files
-                    "-pa_taq_mode", "1",                 # Temporal AQ mode 1 (faster/smaller)
-                ])
-                if user_log is not None:
-                    user_log.append("RDNA 4: AV1 compression mode (3 B-frames, size-optimized)")
-            else:
-                # AV1 Ultra/Other modes: Quality-focused
-                cmd.extend([
-                    "-bf", "3",                              # B-frames support (RDNA 4+, max=3)
-                    "-preanalysis", "1",                     # Pre-analysis pass
-                    "-aq_mode", "caq",                       # Context Adaptive Quantization
-                    "-pa_caq_strength", "high",              # High CAQ strength for quality
-                    "-pa_taq_mode", "2",                     # Temporal AQ mode 2 (best quality)
-                    "-pa_high_motion_quality_boost_mode", "auto",  # High motion boost
-                ])
-                if user_log is not None:
-                    user_log.append("RDNA 4: AV1 quality mode (3 B-frames, quality-optimized)")
+            # All modes use quality-focused B-frame settings
+            cmd.extend([
+                "-bf", "3",                              # B-frames support (RDNA 4+, max=3)
+                "-preanalysis", "1",                     # Pre-analysis pass
+                "-aq_mode", "caq",                       # Context Adaptive Quantization
+                "-pa_caq_strength", "high",              # High CAQ strength for quality
+                "-pa_taq_mode", "2",                     # Temporal AQ mode 2 (best quality)
+                "-pa_high_motion_quality_boost_mode", "auto",  # High motion boost
+            ])
+            if user_log is not None:
+                user_log.append("RDNA 4: AV1 B-frames + quality optimizations (3 B-frames, CAQ high, TAQ mode 2)")
         elif amf_codec == "av1_amf":
             # RDNA 3 and older: No B-frames, but enable quality optimizations
             cmd.extend([
@@ -2878,7 +2885,7 @@ class App:
         ttk.Label(mode_inner, text="ENCODING MODE", font=("Segoe UI", 11, "bold"),
                  background=BG_CARD, foreground=ACCENT).pack(anchor="w", pady=(0, 12))
         
-        modes = ["AV1 Ultra", "AV1 Balanced", "AV1 Fast", "NVENC Ultra", "NVENC Balanced", "NVENC Fast"]
+        modes = ["AV1 Ultra", "AV1 Balanced", "AV1 Compress", "AV1 Fast", "NVENC Ultra", "NVENC Balanced", "NVENC Fast"]
         self.combo_mode = ttk.Combobox(mode_inner, textvariable=self.mode,
                                       state="readonly", width=22,
                                       font=("Segoe UI", 11),
@@ -2909,6 +2916,7 @@ class App:
         mode_descriptions = {
             "AV1 Ultra": "Cinema CRF 22 P4 ~12-16fps 70-75% smaller Auto: AMD GPU",
             "AV1 Balanced": "Best Balance CRF 25  P5  ~18-24fps 75-80% smaller Auto: AMD GPU",
+            "AV1 Compress": "Max Compression CRF 31 ~20-28fps 85-90% smaller Auto: AMD GPU",
             "AV1 Fast": "Quick  CRF 28  P8 ~35-45fps 80-85% smaller Auto: AMD GPU",
             "NVENC Ultra": "GPU Nova-Style 3-level adaptive~150fps",
             "NVENC Balanced": "GPU Nova-Style 3-level adaptive ~155fps",
@@ -4106,7 +4114,12 @@ class App:
                     self.keep_hdr.get(), av1_tune_val, sharpening_val)
             elif mode == "AV1 Balanced":
                 preset_cmd, use_hwaccel = EncodingPresets.get_av1_balanced(
-                    resolution, self.source_width, self.source_height, smart_filters, 
+                    resolution, self.source_width, self.source_height, smart_filters,
+                    self.keep_hdr.get(), av1_tune_val, sharpening_val)
+            elif mode == "AV1 Compress":
+                # Use balanced preset as base for CPU fallback (actual compression happens in AMF)
+                preset_cmd, use_hwaccel = EncodingPresets.get_av1_balanced(
+                    resolution, self.source_width, self.source_height, smart_filters,
                     self.keep_hdr.get(), av1_tune_val, sharpening_val)
             elif mode == "AV1 Fast":
                 preset_cmd, use_hwaccel = EncodingPresets.get_av1_fast(
@@ -4567,7 +4580,12 @@ class App:
                     self.keep_hdr.get(), av1_tune_val, sharpening_val)
             elif mode == "AV1 Balanced":
                 preset_cmd, use_hwaccel = EncodingPresets.get_av1_balanced(
-                    resolution, self.source_width, self.source_height, smart_filters, 
+                    resolution, self.source_width, self.source_height, smart_filters,
+                    self.keep_hdr.get(), av1_tune_val, sharpening_val)
+            elif mode == "AV1 Compress":
+                # Use balanced preset as base for CPU fallback (actual compression happens in AMF)
+                preset_cmd, use_hwaccel = EncodingPresets.get_av1_balanced(
+                    resolution, self.source_width, self.source_height, smart_filters,
                     self.keep_hdr.get(), av1_tune_val, sharpening_val)
             elif mode == "AV1 Fast":
                 preset_cmd, use_hwaccel = EncodingPresets.get_av1_fast(
