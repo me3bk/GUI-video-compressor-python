@@ -2361,25 +2361,24 @@ class EncodingPresets:
         # RDNA 4 OPTIMIZATIONS: AV1 B-frames and enhanced features
         if amf_codec == "av1_amf" and HAS_AMD_RDNA4:
             cmd.extend([
-                "-bf", "3",                  # NEW: B-frames support (RDNA 4+, max=3)
-                "-b_ref_mode", "middle",     # NEW: Use middle B-frame as reference
-                "-preanalysis", "1",         # Pre-analysis pass for better decisions
-                "-vbaq", "1",                # Variance-based adaptive quantization
-                "-me_half_pel", "1",         # Half-pixel motion estimation
-                "-me_quarter_pel", "1",      # Quarter-pixel motion estimation
+                "-bf", "3",                              # B-frames support (RDNA 4+, max=3)
+                "-preanalysis", "1",                     # Pre-analysis pass
+                "-aq_mode", "caq",                       # Context Adaptive Quantization
+                "-pa_caq_strength", "high",              # High CAQ strength for quality
+                "-pa_taq_mode", "2",                     # Temporal AQ mode 2 (best)
+                "-pa_high_motion_quality_boost_mode", "auto",  # High motion boost
             ])
             if user_log is not None:
-                user_log.append("RDNA 4: AV1 B-frames enabled (3 B-frames, middle ref)")
+                user_log.append("RDNA 4: AV1 B-frames + advanced pre-analysis (3 B-frames, CAQ, TAQ)")
         elif amf_codec == "av1_amf":
-            # RDNA 3 and older: No B-frames, but enable other optimizations
+            # RDNA 3 and older: No B-frames, but enable quality optimizations
             cmd.extend([
-                "-preanalysis", "1",
-                "-vbaq", "1",
-                "-me_half_pel", "1",
-                "-me_quarter_pel", "1",
+                "-preanalysis", "1",                     # Pre-analysis pass
+                "-aq_mode", "caq",                       # Context Adaptive Quantization
+                "-pa_caq_strength", "medium",            # Medium CAQ strength
             ])
             if user_log is not None:
-                user_log.append("AMD AV1: Standard mode (no B-frames, RDNA <4)")
+                user_log.append("AMD AV1: Standard mode + CAQ (no B-frames, RDNA <4)")
         elif amf_codec == "hevc_amf":
             # HEVC optimizations
             cmd.extend([
