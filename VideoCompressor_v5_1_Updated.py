@@ -2284,7 +2284,7 @@ class EncodingPresets:
     def get_amf_adaptive(resolution: str, source_width: int, source_height: int, input_path: str,
                          smart_filters: str = "", keep_hdr: bool = True, copy_audio: bool = False,
                          user_log: List[str] = None, custom_cq: Optional[int] = None,
-                         sharpening_profile: str = "medium") -> Tuple[List[str], bool, Dict]:
+                         sharpening_profile: str = "medium", mode: str = "") -> Tuple[List[str], bool, Dict]:
         """
         AMD AMF adaptive path shares the same decision logic but emits AMF-friendly flags.
         """
@@ -2360,16 +2360,32 @@ class EncodingPresets:
 
         # RDNA 4 OPTIMIZATIONS: AV1 B-frames and enhanced features
         if amf_codec == "av1_amf" and HAS_AMD_RDNA4:
-            cmd.extend([
-                "-bf", "3",                              # B-frames support (RDNA 4+, max=3)
-                "-preanalysis", "1",                     # Pre-analysis pass
-                "-aq_mode", "caq",                       # Context Adaptive Quantization
-                "-pa_caq_strength", "high",              # High CAQ strength for quality
-                "-pa_taq_mode", "2",                     # Temporal AQ mode 2 (best)
-                "-pa_high_motion_quality_boost_mode", "auto",  # High motion boost
-            ])
-            if user_log is not None:
-                user_log.append("RDNA 4: AV1 B-frames + advanced pre-analysis (3 B-frames, CAQ, TAQ)")
+            # Check if mode is "AV1 Balanced" for compression-focused settings
+            is_balanced_mode = "balanced" in mode.lower()
+
+            if is_balanced_mode:
+                # AV1 Balanced: Compression-focused (smaller files)
+                cmd.extend([
+                    "-bf", "3",                          # B-frames support (RDNA 4+, max=3)
+                    "-preanalysis", "1",                 # Pre-analysis pass
+                    "-aq_mode", "caq",                   # Context Adaptive Quantization
+                    "-pa_caq_strength", "low",           # Low CAQ for smaller files
+                    "-pa_taq_mode", "1",                 # Temporal AQ mode 1 (faster/smaller)
+                ])
+                if user_log is not None:
+                    user_log.append("RDNA 4: AV1 compression mode (3 B-frames, size-optimized)")
+            else:
+                # AV1 Ultra/Other modes: Quality-focused
+                cmd.extend([
+                    "-bf", "3",                              # B-frames support (RDNA 4+, max=3)
+                    "-preanalysis", "1",                     # Pre-analysis pass
+                    "-aq_mode", "caq",                       # Context Adaptive Quantization
+                    "-pa_caq_strength", "high",              # High CAQ strength for quality
+                    "-pa_taq_mode", "2",                     # Temporal AQ mode 2 (best quality)
+                    "-pa_high_motion_quality_boost_mode", "auto",  # High motion boost
+                ])
+                if user_log is not None:
+                    user_log.append("RDNA 4: AV1 quality mode (3 B-frames, quality-optimized)")
         elif amf_codec == "av1_amf":
             # RDNA 3 and older: No B-frames, but enable quality optimizations
             cmd.extend([
@@ -4051,7 +4067,7 @@ class App:
                 preset_cmd, use_hwaccel, plan_meta = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
                 self._last_hw_plan = plan_meta
             else:
@@ -4078,7 +4094,7 @@ class App:
                 preset_cmd, use_hwaccel, _ = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
             else:
                 use_amd_av1_preview = False
@@ -4125,7 +4141,7 @@ class App:
                 preset_cmd, use_hwaccel, _ = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
             else:
                 preset_cmd, use_hwaccel, _ = EncodingPresets.get_nvenc_adaptive(
@@ -4512,7 +4528,7 @@ class App:
                 preset_cmd, use_hwaccel, plan_meta = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
                 self._last_hw_plan = plan_meta
             else:
@@ -4539,7 +4555,7 @@ class App:
                 preset_cmd, use_hwaccel, _ = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
             else:
                 use_amd_av1_preview = False
@@ -4591,7 +4607,7 @@ class App:
                 preset_cmd, use_hwaccel, plan_meta = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
             elif not use_amd_av1_hardware:  # nvenc or cpu fallback (skip if already using AMD AV1)
                 preset_cmd, use_hwaccel, plan_meta = EncodingPresets.get_nvenc_adaptive(
