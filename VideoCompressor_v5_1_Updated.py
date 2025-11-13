@@ -2361,7 +2361,7 @@ class EncodingPresets:
         # RDNA 4 OPTIMIZATIONS: AV1 B-frames and enhanced features
         if amf_codec == "av1_amf" and HAS_AMD_RDNA4:
             cmd.extend([
-                "-bf", "4",                  # NEW: B-frames support (RDNA 4+)
+                "-bf", "3",                  # NEW: B-frames support (RDNA 4+, max=3)
                 "-b_ref_mode", "middle",     # NEW: Use middle B-frame as reference
                 "-preanalysis", "1",         # Pre-analysis pass for better decisions
                 "-vbaq", "1",                # Variance-based adaptive quantization
@@ -2369,7 +2369,7 @@ class EncodingPresets:
                 "-me_quarter_pel", "1",      # Quarter-pixel motion estimation
             ])
             if user_log is not None:
-                user_log.append("RDNA 4: AV1 B-frames enabled (4 B-frames, middle ref)")
+                user_log.append("RDNA 4: AV1 B-frames enabled (3 B-frames, middle ref)")
         elif amf_codec == "av1_amf":
             # RDNA 3 and older: No B-frames, but enable other optimizations
             cmd.extend([
