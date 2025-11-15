@@ -1577,10 +1577,16 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
         
         # Calculate estimated size
         estimated_bytes = int((total_bitrate * duration * 1000) / 8)
-        
-        # Safety bounds
-        estimated_bytes = max(estimated_bytes, 512 * 1024)
-        estimated_bytes = min(estimated_bytes, input_size * 0.95)
+
+        # Dynamic safety bounds based on input file size
+        # Minimum: 5% of input size (prevents unrealistically low estimates)
+        # Maximum: 95% of input size (prevents overestimation)
+        min_estimate = int(input_size * 0.05)
+        max_estimate = int(input_size * 0.95)
+
+        # Apply bounds with validation
+        estimated_bytes = max(estimated_bytes, min_estimate)
+        estimated_bytes = min(estimated_bytes, max_estimate)
         
         return estimated_bytes
         
