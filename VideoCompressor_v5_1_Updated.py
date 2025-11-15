@@ -258,7 +258,8 @@ class QueueItem:
     actual_size: int = 0
     error: str = ""
     skipped_reason: str = ""
-    
+    delete_original: bool = False  # v5.1.3: Delete original file after successful encoding
+
     def get_display_name(self) -> str:
         """Get shortened display name for queue"""
         name = os.path.basename(self.input_path)
@@ -3761,155 +3762,303 @@ class App:
             self.output_is_auto = True
     
     def _browse_batch(self):
-        """Browse for batch files"""
-        files = filedialog.askopenfilenames(
-            title="Select Videos for Batch Processing",
+        """
+        Enhanced batch processing with drag-and-drop support
+
+        v5.1.3: Major upgrade - drag & drop files, per-file mode selection, delete originals
+        """
+        # Initial file selection (optional - can also drag and drop in dialog)
+        initial_files = filedialog.askopenfilenames(
+            title="Select Videos for Batch Processing (or cancel to drag & drop)",
             filetypes=[
-                ("Video files", "*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpg *.mpeg"),
+                ("Video files", "*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpg *.mpeg *.mts *.m2ts"),
                 ("All files", "*.*")
             ]
         )
-        
-        if not files:
-            return
-        
-        # Show output location dialog
-        output_dialog = tk.Toplevel(self.root)
-        output_dialog.title("Batch Output Location")
-        output_dialog.geometry("500x250")
-        output_dialog.configure(bg=BG_DARK)
-        output_dialog.transient(self.root)
-        output_dialog.grab_set()
-        
+
+        # Show enhanced dialog (works even if no files selected - can drag & drop there)
+        self._show_enhanced_batch_dialog(list(initial_files) if initial_files else [])
+
+    def _show_enhanced_batch_dialog(self, initial_files: List[str]):
+        """
+        Show enhanced batch dialog with drag-and-drop and per-file mode selection
+
+        v5.1.3: New interactive batch queue builder
+        """
+        # Create dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Batch Queue Builder")
+        dialog.geometry("900x600")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
         # Center dialog
-        output_dialog.update_idletasks()
-        x = (output_dialog.winfo_screenwidth() // 2) - (500 // 2)
-        y = (output_dialog.winfo_screenheight() // 2) - (250 // 2)
-        output_dialog.geometry(f"+{x}+{y}")
-        
-        dialog_frame = tk.Frame(output_dialog, bg=BG_DARK)
-        dialog_frame.pack(fill="both", expand=True, padx=12, pady=20)
-        
-        ttk.Label(dialog_frame,
-                 text=f"Adding {len(files)} videos to queue",
-                 font=("Segoe UI", 10, "bold"),
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (900 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (600 // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        # Store batch items {file_path: {"mode": str, "delete_original": bool}}
+        batch_items = {}
+
+        for f in initial_files:
+            batch_items[f] = {
+                "mode": normalize_mode(self.mode.get()),
+                "delete_original": False
+            }
+
+        # Main frame
+        main_frame = tk.Frame(dialog, bg=BG_DARK)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Header
+        header = tk.Frame(main_frame, bg=BG_DARK)
+        header.pack(fill="x", pady=(0, 15))
+
+        ttk.Label(header,
+                 text="BATCH QUEUE BUILDER",
+                 font=("Segoe UI", 14, "bold"),
                  foreground=ACCENT,
-                 background=BG_DARK).pack(pady=(0, 8))
-        
-        ttk.Label(dialog_frame,
-                 text="Where should the encoded files be saved?",
-                 font=("Segoe UI", 10),
-                 foreground=TEXT_BRIGHT,
-                 background=BG_DARK).pack(pady=(0, 8))
-        
-        # Radio buttons
-        output_mode = tk.StringVar(value="source")
-        
-        radio_frame = tk.Frame(dialog_frame, bg=BG_CARD,
-                              highlightbackground=BORDER_BRIGHT, highlightthickness=2)
-        radio_frame.pack(fill="x", pady=(0, 8))
-        
-        ttk.Radiobutton(radio_frame,
-                       text="Same folder as source files",
-                       variable=output_mode,
-                       value="source").pack(anchor="w", padx=10, pady=(10, 5))
-        
-        ttk.Radiobutton(radio_frame,
-                       text="Custom output folder (all files)",
-                       variable=output_mode,
-                       value="custom").pack(anchor="w", padx=10, pady=(5, 10))
-        
-        # Custom folder selection
-        custom_folder = tk.StringVar()
-        
-        folder_frame = tk.Frame(dialog_frame, bg=BG_DARK)
-        folder_frame.pack(fill="x", pady=(0, 8))
-        
-        folder_entry = tk.Entry(folder_frame, textvariable=custom_folder,
-                               bg=BG_INPUT, fg=TEXT_BRIGHT,
-                               font=("Segoe UI", 9), state="disabled")
-        folder_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        
-        def browse_folder():
-            folder = filedialog.askdirectory(title="Select Output Folder")
-            if folder:
-                custom_folder.set(folder)
-        
-        folder_btn = ttk.Button(folder_frame, text="Browse",
-                               command=browse_folder,
-                               style="Secondary.TButton",
-                               state="disabled")
-        folder_btn.pack(side="left")
-        
-        def on_mode_change():
-            if output_mode.get() == "custom":
-                folder_entry.config(state="normal")
-                folder_btn.config(state="normal")
-            else:
-                folder_entry.config(state="disabled")
-                folder_btn.config(state="disabled")
-        
-        output_mode.trace_add("write", lambda *args: on_mode_change())
-        
-        # OK/Cancel buttons
-        btn_frame = tk.Frame(dialog_frame, bg=BG_DARK)
-        btn_frame.pack(fill="x")
-        
+                 background=BG_DARK).pack(side="left")
+
+        count_label = ttk.Label(header,
+                               text=f"{len(batch_items)} files",
+                               font=("Segoe UI", 10),
+                               foreground=TEXT_DIM,
+                               background=BG_DARK)
+        count_label.pack(side="left", padx=(15, 0))
+
+        # Drag & Drop Area
+        drop_frame = tk.Frame(main_frame, bg=BG_CARD,
+                             highlightbackground=ACCENT, highlightthickness=2)
+        drop_frame.pack(fill="x", pady=(0, 15))
+
+        drop_label = ttk.Label(drop_frame,
+                              text="Drag & Drop Video Files Here  or  Click 'Add Files' button",
+                              font=("Segoe UI", 11),
+                              foreground=TEXT_DIM,
+                              background=BG_CARD)
+        drop_label.pack(pady=20)
+
+        # Setup drag and drop for drop area
+        if DND_OK:
+            try:
+                drop_frame.drop_target_register(DND_FILES)
+
+                def on_drop_files(event):
+                    try:
+                        files = dialog.tk.splitlist(event.data)
+                        for file_path in files:
+                            file_path = file_path.strip('{}').strip('"').strip("'").strip()
+                            if os.path.isfile(file_path) and file_path.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.mts', '.m2ts')):
+                                if file_path not in batch_items:
+                                    batch_items[file_path] = {
+                                        "mode": normalize_mode(self.mode.get()),
+                                        "delete_original": False
+                                    }
+                        update_file_list()
+                        count_label.config(text=f"{len(batch_items)} files")
+                    except Exception as e:
+                        print(f"[BATCH] Error dropping files: {e}")
+
+                drop_frame.dnd_bind('<<Drop>>', on_drop_files)
+            except Exception as e:
+                print(f"[BATCH] Could not setup drag and drop: {e}")
+
+        # Buttons row
+        btn_row = tk.Frame(main_frame, bg=BG_DARK)
+        btn_row.pack(fill="x", pady=(0, 15))
+
+        def add_files_click():
+            files = filedialog.askopenfilenames(
+                title="Select Videos to Add",
+                filetypes=[
+                    ("Video files", "*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpg *.mpeg *.mts *.m2ts"),
+                    ("All files", "*.*")
+                ]
+            )
+            for f in files:
+                if f not in batch_items:
+                    batch_items[f] = {
+                        "mode": normalize_mode(self.mode.get()),
+                        "delete_original": False
+                    }
+            update_file_list()
+            count_label.config(text=f"{len(batch_items)} files")
+
+        ttk.Button(btn_row, text="Add Files", command=add_files_click,
+                  style="TButton").pack(side="left", padx=(0, 10))
+
+        def clear_all():
+            batch_items.clear()
+            update_file_list()
+            count_label.config(text=f"{len(batch_items)} files")
+
+        ttk.Button(btn_row, text="Clear All", command=clear_all,
+                  style="Secondary.TButton").pack(side="left")
+
+        # Global delete original checkbox
+        global_delete_var = tk.BooleanVar(value=False)
+
+        def toggle_all_delete():
+            for item_data in batch_items.values():
+                item_data["delete_original"] = global_delete_var.get()
+            update_file_list()
+
+        delete_frame = tk.Frame(btn_row, bg=BG_DARK)
+        delete_frame.pack(side="right")
+
+        delete_check = ttk.Checkbutton(delete_frame,
+                                      text="Delete original files after successful encoding",
+                                      variable=global_delete_var,
+                                      command=toggle_all_delete)
+        delete_check.pack(side="left")
+
+        # File list with scrollbar
+        list_frame = tk.Frame(main_frame, bg=BG_INPUT,
+                             highlightbackground=ACCENT, highlightthickness=2)
+        list_frame.pack(fill="both", expand=True, pady=(0, 15))
+
+        # Canvas for scrolling
+        canvas = tk.Canvas(list_frame, bg=BG_INPUT, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG_INPUT)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Available modes
+        modes = ["AV1 Ultra", "AV1 Balanced", "AV1 Compress", "AV1 Fast",
+                 "NVENC Ultra", "NVENC Balanced", "NVENC Fast"]
+
+        def update_file_list():
+            # Clear existing widgets
+            for widget in scrollable_frame.winfo_children():
+                widget.destroy()
+
+            if not batch_items:
+                ttk.Label(scrollable_frame,
+                         text="No files added yet. Drag & drop files or click 'Add Files'",
+                         font=("Segoe UI", 10),
+                         foreground=TEXT_DIM,
+                         background=BG_INPUT).pack(pady=50)
+                return
+
+            # Header row
+            header_row = tk.Frame(scrollable_frame, bg=BG_CARD)
+            header_row.pack(fill="x", padx=5, pady=(5, 2))
+
+            ttk.Label(header_row, text="File", width=40, font=("Segoe UI", 9, "bold"),
+                     background=BG_CARD, foreground=TEXT_BRIGHT).pack(side="left", padx=5)
+            ttk.Label(header_row, text="Mode", width=15, font=("Segoe UI", 9, "bold"),
+                     background=BG_CARD, foreground=TEXT_BRIGHT).pack(side="left", padx=5)
+            ttk.Label(header_row, text="Delete Original", width=12, font=("Segoe UI", 9, "bold"),
+                     background=BG_CARD, foreground=TEXT_BRIGHT).pack(side="left", padx=5)
+            ttk.Label(header_row, text="", width=8, font=("Segoe UI", 9, "bold"),
+                     background=BG_CARD).pack(side="left")
+
+            # File rows
+            for file_path, item_data in batch_items.items():
+                row = tk.Frame(scrollable_frame, bg=BG_CARD,
+                              highlightbackground=BORDER, highlightthickness=1)
+                row.pack(fill="x", padx=5, pady=2)
+
+                # Filename
+                filename = os.path.basename(file_path)
+                if len(filename) > 50:
+                    filename = filename[:47] + "..."
+
+                file_label = ttk.Label(row, text=filename, width=40,
+                                      background=BG_CARD, foreground=TEXT_BRIGHT)
+                file_label.pack(side="left", padx=5, pady=8)
+
+                # Mode dropdown
+                mode_var = tk.StringVar(value=item_data["mode"])
+
+                def make_mode_change(fp=file_path, mv=mode_var):
+                    def on_change(*args):
+                        batch_items[fp]["mode"] = normalize_mode(mv.get())
+                    return on_change
+
+                mode_var.trace_add("write", make_mode_change())
+
+                mode_combo = ttk.Combobox(row, textvariable=mode_var, values=modes,
+                                         state="readonly", width=15)
+                mode_combo.pack(side="left", padx=5)
+
+                # Delete checkbox
+                delete_var = tk.BooleanVar(value=item_data["delete_original"])
+
+                def make_delete_change(fp=file_path, dv=delete_var):
+                    def on_change():
+                        batch_items[fp]["delete_original"] = dv.get()
+                    return on_change
+
+                delete_check = ttk.Checkbutton(row, variable=delete_var,
+                                              command=make_delete_change())
+                delete_check.pack(side="left", padx=40)
+
+                # Remove button
+                def make_remove(fp=file_path):
+                    def remove():
+                        del batch_items[fp]
+                        update_file_list()
+                        count_label.config(text=f"{len(batch_items)} files")
+                    return remove
+
+                ttk.Button(row, text="Remove", command=make_remove(),
+                          style="Cancel.TButton").pack(side="left", padx=5)
+
+        update_file_list()
+
+        # Bottom buttons
+        bottom_frame = tk.Frame(main_frame, bg=BG_DARK)
+        bottom_frame.pack(fill="x")
+
         result = {"confirmed": False}
-        
+
         def on_ok():
-            if output_mode.get() == "custom" and not custom_folder.get():
-                messagebox.showerror("Error", "Please select an output folder")
+            if not batch_items:
+                messagebox.showwarning("No Files", "Please add at least one video file")
                 return
             result["confirmed"] = True
-            result["mode"] = output_mode.get()
-            result["folder"] = custom_folder.get()
-            output_dialog.destroy()
-        
+            result["items"] = batch_items
+            dialog.destroy()
+
         def on_cancel():
-            output_dialog.destroy()
-        
-        ttk.Button(btn_frame, text="Add to Queue", command=on_ok,
+            dialog.destroy()
+
+        ttk.Button(bottom_frame, text="Add to Queue", command=on_ok,
                   style="TButton").pack(side="left", expand=True, fill="x", padx=(0, 10))
-        
-        ttk.Button(btn_frame, text="Cancel", command=on_cancel,
+
+        ttk.Button(bottom_frame, text="Cancel", command=on_cancel,
                   style="Cancel.TButton").pack(side="left", expand=True, fill="x")
-        
-        self.root.wait_window(output_dialog)
-        
+
+        self.root.wait_window(dialog)
+
         if not result["confirmed"]:
             return
-        
+
         # Add files to queue
-        current_auto_mode = self.auto_mode.get()
-        
-        for f in files:
-            # Auto-select mode if enabled
-            if current_auto_mode:
-                try:
-                    info = ffprobe_info_extended(f)
-                    file_mode = smart_select_preset(info, HAS_HEVC_NVENC, HAS_LIBSVTAV1, self.error_log)
-                    file_mode = normalize_mode(file_mode)
-                except:
-                    file_mode = normalize_mode(self.mode.get())
-            else:
-                file_mode = normalize_mode(self.mode.get())
-            
-            # Generate output path
-            if result["mode"] == "source":
-                base = os.path.splitext(f)[0]
-                ext = ".mp4"
-                output = f"{base}_{file_mode.replace(' ', '_')}{ext}"
-            else:
-                filename = os.path.basename(f)
-                base = os.path.splitext(filename)[0]
-                ext = ".mp4"
-                output = os.path.join(result["folder"], f"{base}_{file_mode.replace(' ', '_')}{ext}")
-            
+        for file_path, item_data in result["items"].items():
+            # Generate output path (same folder as source)
+            base = os.path.splitext(file_path)[0]
+            ext = ".mp4"
+            output = f"{base}_{item_data['mode'].replace(' ', '_')}{ext}"
+
             # Estimate size
             try:
-                info = ffprobe_info(f)
-                info_ext = ffprobe_info_extended(f)
+                info = ffprobe_info(file_path)
+                info_ext = ffprobe_info_extended(file_path)
                 tmp_log: List[str] = []
                 filters_for_est = get_smart_filters(info_ext, self.keep_hdr.get(), tmp_log)
                 copy_audio = should_copy_audio(info_ext, tmp_log)
@@ -3923,8 +4072,8 @@ class App:
                 else:
                     encoder_hint = "auto"
                 est_size = estimate_output_size(
-                    f,
-                    file_mode,
+                    file_path,
+                    item_data["mode"],
                     self.resolution.get(),
                     info["bitrate"],
                     keep_hdr=self.keep_hdr.get(),
@@ -3936,20 +4085,21 @@ class App:
                 )
             except:
                 est_size = 0
-            
+
             # Add to queue
-            item = QueueItem(
-                input_path=f,
+            queue_item = QueueItem(
+                input_path=file_path,
                 output_path=output,
-                mode=file_mode,
+                mode=item_data["mode"],
                 resolution=self.resolution.get(),
                 two_pass=self.two_pass.get(),
-                estimated_size=est_size
+                estimated_size=est_size,
+                delete_original=item_data["delete_original"]
             )
-            self.queue.append(item)
-        
+            self.queue.append(queue_item)
+
         self._update_queue_display()
-    
+
     def _browse_output(self):
         """Browse for output file"""
         f = filedialog.asksaveasfilename(
@@ -5061,11 +5211,21 @@ class App:
             self._update_queue_display()
     
     def _auto_save_log(self, outp: str, out_size: int, reduction: float):
-        """Automatically save encoding log"""
+        """
+        Automatically save encoding log
+
+        v5.1.3: Save all logs in centralized logs/ folder in script directory
+        """
         try:
-            output_dir = os.path.dirname(outp) if os.path.dirname(outp) else '.'
+            # Create logs folder in script directory
+            script_dir = os.path.dirname(os.path.abspath(__file__)) if hasattr(__builtins__, '__file__') else os.getcwd()
+            logs_dir = os.path.join(script_dir, "logs")
+            os.makedirs(logs_dir, exist_ok=True)
+
+            # Generate log filename with timestamp
             output_name = os.path.splitext(os.path.basename(outp))[0]
-            log_filename = os.path.join(output_dir, f"{output_name}_encoding_log.txt")
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            log_filename = os.path.join(logs_dir, f"{output_name}_{timestamp}_log.txt")
             
             log_content = []
             log_content.append("=" * 80)
@@ -5162,8 +5322,8 @@ class App:
                     )
                     save_history_entry(history_entry)
                     
-                    # NEW v5.0: Delete source file if enabled
-                    if self.delete_source_after.get():
+                    # v5.1.3: Delete original file if enabled for this queue item
+                    if self.current_queue_item.delete_original:
                         if os.path.exists(self.current_queue_item.input_path) and os.path.exists(outp):
                             try:
                                 os.remove(self.current_queue_item.input_path)
