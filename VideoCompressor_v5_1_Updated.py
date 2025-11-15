@@ -457,47 +457,62 @@ def detect_film_grain(input_path: str, duration: float = 0.0) -> Tuple[bool, flo
     return (False, 0.0)
 
 def ffprobe_info(path: str) -> Dict:
-    """Get comprehensive video info using ffprobe"""
+    """
+    Get comprehensive video info using ffprobe
+
+    v5.1.1: Fixed to handle unusual video formats (portrait, reversed stream order, etc.)
+    """
     if not FFPROBE:
         return {"duration": 1.0, "fps": 25.0, "bitrate": 2000, "width": 1920, "height": 1080}
-    
+
     try:
         out = subprocess.check_output(
             [FFPROBE, "-v", "error", "-show_entries",
-             "format=duration,bit_rate:stream=r_frame_rate,width,height,codec_name",
+             "format=duration,bit_rate:stream=codec_type,r_frame_rate,width,height,codec_name",
              "-of", "json", path],
             stderr=subprocess.STDOUT, timeout=10
         )
         data = json.loads(out.decode())
-        
+
         info = {}
         if "format" in data and "duration" in data["format"]:
             info["duration"] = max(float(data["format"]["duration"]), 0.1)
         else:
             info["duration"] = 1.0
-        
+
         if "format" in data and "bit_rate" in data["format"]:
             info["bitrate"] = int(data["format"]["bit_rate"]) // 1000
         else:
             info["bitrate"] = 2000
-        
-        if "streams" in data and len(data["streams"]) > 0:
-            fps_str = data["streams"][0].get("r_frame_rate", "25/1")
+
+        # Find the video stream (might not be stream #0 in unusual formats)
+        video_stream = None
+        if "streams" in data:
+            for stream in data["streams"]:
+                if stream.get("codec_type") == "video":
+                    video_stream = stream
+                    break
+
+        if video_stream:
+            # Extract FPS
+            fps_str = video_stream.get("r_frame_rate", "25/1")
             if '/' in fps_str:
                 num, den = fps_str.split('/')
                 info["fps"] = float(num) / float(den) if float(den) != 0 else 25.0
             else:
                 info["fps"] = float(fps_str)
-            
-            info["width"] = data["streams"][0].get("width", 1920)
-            info["height"] = data["streams"][0].get("height", 1080)
+
+            # Extract dimensions
+            info["width"] = video_stream.get("width", 1920)
+            info["height"] = video_stream.get("height", 1080)
         else:
+            # No video stream found, use defaults
             info["fps"] = 25.0
             info["width"] = 1920
             info["height"] = 1080
-        
+
         return info
-        
+
     except Exception as e:
         return {"duration": 1.0, "fps": 25.0, "bitrate": 2000, "width": 1920, "height": 1080}
 
@@ -1435,6 +1450,7 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
                          custom_cq: Optional[int] = None, sharpening_profile: str = "medium") -> int:
     """
     NEW v4.6.0: Enhanced size estimation with adaptive NVENC awareness
+    v5.1.1: Fixed to handle unusual video formats (portrait, reversed stream order, high fps)
     """
     try:
         input_size = os.path.getsize(input_path)
@@ -1444,6 +1460,14 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
             input_bitrate = info["bitrate"]
         width = info["width"]
         height = info["height"]
+
+        # Debug logging for unusual formats
+        if width < height:  # Portrait orientation
+            print(f"[EST] Portrait video detected: {width}x{height}")
+        if info.get("fps", 0) > 50:  # High framerate
+            print(f"[EST] High framerate detected: {info.get('fps'):.2f} fps")
+        if input_bitrate > 15000:  # Very high bitrate
+            print(f"[EST] High bitrate detected: {input_bitrate} kbps")
         
         # Determine source complexity level
         if input_bitrate > 8000:
@@ -3192,18 +3216,49 @@ class App:
         self.clear_btn.pack(side="left", expand=True, fill="x")
     
     def _setup_dnd(self):
-        """Setup drag and drop"""
+        """
+        Setup drag and drop
+
+        v5.1.1: Improved error handling for Windows 10 compatibility
+        """
         try:
+            if not DND_OK:
+                print("[DND] tkinterdnd2 not available, drag and drop disabled")
+                return
+
             self.ein.drop_target_register(DND_FILES)
             self.ein.dnd_bind('<<Drop>>', self._on_drop)
-        except:
-            pass
+            print("[DND] Drag and drop initialized successfully")
+        except Exception as e:
+            print(f"[DND] Failed to setup drag and drop: {e}")
+            print("[DND] You can still browse for files using the Browse button")
     
     def _on_drop(self, event):
-        """Handle drag and drop"""
-        files = self.root.tk.splitlist(event.data)
-        if files:
-            self.inp.set(files[0])
+        """
+        Handle drag and drop
+
+        v5.1.1: Improved file path handling for Windows 10
+        """
+        try:
+            # Handle different drop event formats (Windows vs Linux)
+            if isinstance(event.data, str):
+                # Remove curly braces that Windows sometimes adds
+                file_path = event.data.strip('{}')
+                # Handle Tkinter's list format
+                files = self.root.tk.splitlist(file_path)
+            else:
+                files = [event.data]
+
+            if files:
+                # Normalize path (remove quotes, extra spaces)
+                file_path = str(files[0]).strip().strip('"').strip("'")
+                if os.path.isfile(file_path):
+                    self.inp.set(file_path)
+                    print(f"[DND] File dropped: {file_path}")
+                else:
+                    print(f"[DND] Invalid file path: {file_path}")
+        except Exception as e:
+            print(f"[DND] Error handling drop: {e}")
     
     def _on_auto_mode_toggle(self):
         """Handle auto-mode toggle"""
@@ -4701,19 +4756,22 @@ class App:
                     return
             
             self.error_log.append("")
+
+            # v5.1.1: Log adaptive parameters only for hardware modes (plan_meta exists)
+            # CPU-based encoding doesn't use plan_meta, and that's okay
             if plan_meta:
                 pp = plan_meta["public_params"]
                 filt = plan_meta["filter_strings"]
                 info_for_log = plan_meta["info"]
-                
+
                 # Log encoder type
                 encoder_display = "AMD AMF" if encoder_name == "amf" else "NVIDIA NVENC" if encoder_name == "nvenc" else "CPU"
                 self.error_log.append(f"Ã°Å¸Å¡â‚¬ {encoder_display} ADAPTIVE PARAMETERS:")
-                
+
                 # Log codec if AMF
                 if encoder_name == "amf" and "amf_codec" in plan_meta:
                     self.error_log.append(f"   Codec: {plan_meta['amf_codec'].upper()}")
-                
+
                 self.error_log.append(
                     f"   Source: {info_for_log['width']}x{info_for_log['height']} @ "
                     f"{info_for_log.get('bitrate_bps', info_for_log.get('bitrate', 0)*1000)/1_000_000:.2f} Mbps, "
@@ -4730,9 +4788,11 @@ class App:
                     f"   Filters: {plan_meta['filter_profile']} => {filt['denoise']}{filter_suffix}"
                 )
                 self.error_log.append("")
-        else:
-            self.root.after(0, self._show_error, "Unknown encoding mode")
-            return
+            else:
+                # CPU-based encoding mode (no plan_meta) - this is valid
+                self.error_log.append(f"Ã°Å¸Å¡â‚¬ CPU ENCODING MODE: {mode}")
+                self.error_log.append(f"   Using software encoder (libsvtav1/libx264)")
+                self.error_log.append("")
         
         # Handle container format for AV1 AMF
         if encoder_name == "amf" and plan_meta and plan_meta.get("amf_codec") == "av1_amf":
