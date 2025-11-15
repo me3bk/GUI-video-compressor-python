@@ -460,9 +460,10 @@ def ffprobe_info(path: str) -> Dict:
     """
     Get comprehensive video info using ffprobe
 
-    v5.1.1: Fixed to handle unusual video formats (portrait, reversed stream order, etc.)
+    v5.1.3: Enhanced error handling and logging for estimation debugging
     """
     if not FFPROBE:
+        print("[EST] WARNING: ffprobe not available, using defaults")
         return {"duration": 1.0, "fps": 25.0, "bitrate": 2000, "width": 1920, "height": 1080}
 
     try:
@@ -475,15 +476,30 @@ def ffprobe_info(path: str) -> Dict:
         data = json.loads(out.decode())
 
         info = {}
+
+        # Extract format-level info
         if "format" in data and "duration" in data["format"]:
             info["duration"] = max(float(data["format"]["duration"]), 0.1)
         else:
             info["duration"] = 1.0
+            print(f"[EST] WARNING: No duration found in format, using default")
 
         if "format" in data and "bit_rate" in data["format"]:
             info["bitrate"] = int(data["format"]["bit_rate"]) // 1000
         else:
             info["bitrate"] = 2000
+            print(f"[EST] WARNING: No bitrate in format, will try to calculate from file size")
+            # Calculate bitrate from file size if format bitrate is missing
+            try:
+                file_size = os.path.getsize(path)
+                duration = info.get("duration", 1.0)
+                if duration > 0:
+                    # bitrate = (file_size * 8) / duration / 1000 (for kbps)
+                    calculated_bitrate = int((file_size * 8) / duration / 1000)
+                    info["bitrate"] = calculated_bitrate
+                    print(f"[EST] Calculated bitrate from file size: {calculated_bitrate} kbps")
+            except Exception as e:
+                print(f"[EST] Could not calculate bitrate from file size: {e}")
 
         # Find the video stream (might not be stream #0 in unusual formats)
         video_stream = None
@@ -505,15 +521,21 @@ def ffprobe_info(path: str) -> Dict:
             # Extract dimensions
             info["width"] = video_stream.get("width", 1920)
             info["height"] = video_stream.get("height", 1080)
+
+            print(f"[EST] Video stream found: {info['width']}x{info['height']}, {info['fps']:.2f} fps, {info['bitrate']} kbps")
         else:
             # No video stream found, use defaults
             info["fps"] = 25.0
             info["width"] = 1920
             info["height"] = 1080
+            print(f"[EST] WARNING: No video stream found, using defaults")
 
         return info
 
     except Exception as e:
+        print(f"[EST] ERROR in ffprobe_info: {e}")
+        import traceback
+        traceback.print_exc()
         return {"duration": 1.0, "fps": 25.0, "bitrate": 2000, "width": 1920, "height": 1080}
 
 # ============================================================================
@@ -4455,6 +4477,7 @@ class App:
         self.input_fps = info["fps"]
         self.source_width = info["width"]
         self.source_height = info["height"]
+        print(f"[PROGRESS] Video duration set: {self.total_duration:.2f}s ({self.total_duration/60:.1f} min), {self.input_fps:.2f} fps, {self.source_width}x{self.source_height}")
         self.input_size = os.path.getsize(inp)
         
         # Save resume state
@@ -4519,6 +4542,7 @@ class App:
         self.input_fps = info["fps"]
         self.input_size = os.path.getsize(self.current_queue_item.input_path)
         self.source_width = info["width"]
+        print(f"[PROGRESS] Queue item duration set: {self.total_duration:.2f}s ({self.total_duration/60:.1f} min), {self.input_fps:.2f} fps")
         self.source_height = info["height"]
         self.estimated_output_size = self.current_queue_item.estimated_size
         
