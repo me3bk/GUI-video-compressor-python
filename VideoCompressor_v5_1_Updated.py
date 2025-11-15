@@ -3237,28 +3237,42 @@ class App:
         """
         Handle drag and drop
 
-        v5.1.1: Improved file path handling for Windows 10
+        v5.1.2: Fixed Windows path parsing with spaces in filenames
         """
         try:
+            # Debug: Show raw event data
+            print(f"[DND] Raw event.data: {repr(event.data)}")
+
             # Handle different drop event formats (Windows vs Linux)
             if isinstance(event.data, str):
-                # Remove curly braces that Windows sometimes adds
-                file_path = event.data.strip('{}')
-                # Handle Tkinter's list format
-                files = self.root.tk.splitlist(file_path)
+                # Use splitlist directly - it correctly handles curly braces
+                # tkinterdnd2 wraps paths with spaces in curly braces: {C:/path/file name.mp4}
+                files = self.root.tk.splitlist(event.data)
             else:
                 files = [event.data]
 
+            print(f"[DND] Parsed files list: {files}")
+
             if files:
-                # Normalize path (remove quotes, extra spaces)
-                file_path = str(files[0]).strip().strip('"').strip("'")
+                # Normalize path (remove curly braces, quotes, extra spaces)
+                file_path = str(files[0]).strip().strip('{}').strip('"').strip("'").strip()
+
+                print(f"[DND] Normalized path: {file_path}")
+                print(f"[DND] File exists: {os.path.exists(file_path)}")
+                print(f"[DND] Is file: {os.path.isfile(file_path)}")
+                print(f"[DND] Is directory: {os.path.isdir(file_path)}")
+
                 if os.path.isfile(file_path):
                     self.inp.set(file_path)
-                    print(f"[DND] File dropped: {file_path}")
+                    print(f"[DND] ✓ File dropped successfully: {file_path}")
                 else:
-                    print(f"[DND] Invalid file path: {file_path}")
+                    print(f"[DND] ✗ Invalid file path: {file_path}")
+                    if os.path.isdir(file_path):
+                        print(f"[DND]   This is a directory, not a file. Please drop a video file.")
         except Exception as e:
             print(f"[DND] Error handling drop: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _on_auto_mode_toggle(self):
         """Handle auto-mode toggle"""
