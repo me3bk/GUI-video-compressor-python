@@ -313,16 +313,38 @@ def find_ffmpeg() -> Optional[str]:
     return None
 
 def find_ffprobe() -> Optional[str]:
-    """Find ffprobe executable"""
+    """Find ffprobe executable (smarter version)"""
+    # 1) First: try to find it next to the discovered ffmpeg
     ffmpeg_path = FFMPEG
     if ffmpeg_path:
-        ffprobe_path = ffmpeg_path.replace("ffmpeg", "ffprobe")
-        if os.path.isfile(ffprobe_path):
-            return ffprobe_path
+        ff_dir = os.path.dirname(ffmpeg_path)
+        for exe in ["ffprobe.exe", "ffprobe"]:
+            candidate = os.path.join(ff_dir, exe)
+            if os.path.isfile(candidate):
+                return candidate
+
+    # 2) Second: search in PATH like we do for ffmpeg
+    for exe in ["ffprobe.exe", "ffprobe"]:
+        for p in os.environ.get("PATH", "").split(os.pathsep):
+            full = os.path.join(p, exe)
+            if os.path.isfile(full):
+                return full
+
+        # 3) Third: check script directory / current working directory
+        local = os.path.join(os.getcwd(), exe)
+        if os.path.isfile(local):
+            return local
+
     return None
 
 FFMPEG = find_ffmpeg()
 FFPROBE = find_ffprobe()
+
+# Debug: Show ffprobe detection status
+if FFPROBE:
+    print(f"[INIT] ffprobe found: {FFPROBE}")
+else:
+    print("[INIT] WARNING: ffprobe not found - estimation will use fallback values")
 
 def check_codec_support(codec_name: str) -> bool:
     """Check if FFmpeg supports a specific codec"""
