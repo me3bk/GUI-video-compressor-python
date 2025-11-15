@@ -258,7 +258,8 @@ class QueueItem:
     actual_size: int = 0
     error: str = ""
     skipped_reason: str = ""
-    
+    delete_original: bool = False  # v5.1.3: Delete original file after successful encoding
+
     def get_display_name(self) -> str:
         """Get shortened display name for queue"""
         name = os.path.basename(self.input_path)
@@ -457,48 +458,85 @@ def detect_film_grain(input_path: str, duration: float = 0.0) -> Tuple[bool, flo
     return (False, 0.0)
 
 def ffprobe_info(path: str) -> Dict:
-    """Get comprehensive video info using ffprobe"""
+    """
+    Get comprehensive video info using ffprobe
+
+    v5.1.3: Enhanced error handling and logging for estimation debugging
+    """
     if not FFPROBE:
+        print("[EST] WARNING: ffprobe not available, using defaults")
         return {"duration": 1.0, "fps": 25.0, "bitrate": 2000, "width": 1920, "height": 1080}
-    
+
     try:
         out = subprocess.check_output(
             [FFPROBE, "-v", "error", "-show_entries",
-             "format=duration,bit_rate:stream=r_frame_rate,width,height,codec_name",
+             "format=duration,bit_rate:stream=codec_type,r_frame_rate,width,height,codec_name",
              "-of", "json", path],
             stderr=subprocess.STDOUT, timeout=10
         )
         data = json.loads(out.decode())
-        
+
         info = {}
+
+        # Extract format-level info
         if "format" in data and "duration" in data["format"]:
             info["duration"] = max(float(data["format"]["duration"]), 0.1)
         else:
             info["duration"] = 1.0
-        
+            print(f"[EST] WARNING: No duration found in format, using default")
+
         if "format" in data and "bit_rate" in data["format"]:
             info["bitrate"] = int(data["format"]["bit_rate"]) // 1000
         else:
             info["bitrate"] = 2000
-        
-        if "streams" in data and len(data["streams"]) > 0:
-            fps_str = data["streams"][0].get("r_frame_rate", "25/1")
+            print(f"[EST] WARNING: No bitrate in format, will try to calculate from file size")
+            # Calculate bitrate from file size if format bitrate is missing
+            try:
+                file_size = os.path.getsize(path)
+                duration = info.get("duration", 1.0)
+                if duration > 0:
+                    # bitrate = (file_size * 8) / duration / 1000 (for kbps)
+                    calculated_bitrate = int((file_size * 8) / duration / 1000)
+                    info["bitrate"] = calculated_bitrate
+                    print(f"[EST] Calculated bitrate from file size: {calculated_bitrate} kbps")
+            except Exception as e:
+                print(f"[EST] Could not calculate bitrate from file size: {e}")
+
+        # Find the video stream (might not be stream #0 in unusual formats)
+        video_stream = None
+        if "streams" in data:
+            for stream in data["streams"]:
+                if stream.get("codec_type") == "video":
+                    video_stream = stream
+                    break
+
+        if video_stream:
+            # Extract FPS
+            fps_str = video_stream.get("r_frame_rate", "25/1")
             if '/' in fps_str:
                 num, den = fps_str.split('/')
                 info["fps"] = float(num) / float(den) if float(den) != 0 else 25.0
             else:
                 info["fps"] = float(fps_str)
-            
-            info["width"] = data["streams"][0].get("width", 1920)
-            info["height"] = data["streams"][0].get("height", 1080)
+
+            # Extract dimensions
+            info["width"] = video_stream.get("width", 1920)
+            info["height"] = video_stream.get("height", 1080)
+
+            print(f"[EST] Video stream found: {info['width']}x{info['height']}, {info['fps']:.2f} fps, {info['bitrate']} kbps")
         else:
+            # No video stream found, use defaults
             info["fps"] = 25.0
             info["width"] = 1920
             info["height"] = 1080
-        
+            print(f"[EST] WARNING: No video stream found, using defaults")
+
         return info
-        
+
     except Exception as e:
+        print(f"[EST] ERROR in ffprobe_info: {e}")
+        import traceback
+        traceback.print_exc()
         return {"duration": 1.0, "fps": 25.0, "bitrate": 2000, "width": 1920, "height": 1080}
 
 # ============================================================================
@@ -771,21 +809,24 @@ def normalize_mode(mode: str) -> str:
     # Handle exact matches first (case-insensitive)
     valid_modes = {
         "av1 ultra": "AV1 Ultra",
-        "av1 balanced": "AV1 Balanced", 
+        "av1 balanced": "AV1 Balanced",
+        "av1 compress": "AV1 Compress",
         "av1 fast": "AV1 Fast",
         "nvenc ultra": "NVENC Ultra",
         "nvenc balanced": "NVENC Balanced",
         "nvenc fast": "NVENC Fast",
         "nvenc adaptive": "NVENC Adaptive"
     }
-    
+
     if mode_lower in valid_modes:
         return valid_modes[mode_lower]
-    
+
     # Handle legacy mode names and variants
     if "av1" in mode_lower:
         if "ultra" in mode_lower:
             return "AV1 Ultra"
+        elif "compress" in mode_lower:
+            return "AV1 Compress"
         elif "fast" in mode_lower:
             return "AV1 Fast"
         else:
@@ -1432,6 +1473,7 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
                          custom_cq: Optional[int] = None, sharpening_profile: str = "medium") -> int:
     """
     NEW v4.6.0: Enhanced size estimation with adaptive NVENC awareness
+    v5.1.1: Fixed to handle unusual video formats (portrait, reversed stream order, high fps)
     """
     try:
         input_size = os.path.getsize(input_path)
@@ -1441,6 +1483,14 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
             input_bitrate = info["bitrate"]
         width = info["width"]
         height = info["height"]
+
+        # Debug logging for unusual formats
+        if width < height:  # Portrait orientation
+            print(f"[EST] Portrait video detected: {width}x{height}")
+        if info.get("fps", 0) > 50:  # High framerate
+            print(f"[EST] High framerate detected: {info.get('fps'):.2f} fps")
+        if input_bitrate > 15000:  # Very high bitrate
+            print(f"[EST] High bitrate detected: {input_bitrate} kbps")
         
         # Determine source complexity level
         if input_bitrate > 8000:
@@ -1475,9 +1525,10 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
         if encoder_choice not in {"amf", "nvenc"}:
             encoder_choice = "nvenc"
         use_balanced_amf = (mode == "AV1 Balanced" and encoder_choice == "amf")
-        
-        # For NVENC/AMF modes or AV1 Balanced with AMD hardware, use adaptive plan
-        if mode in adaptive_modes or use_balanced_amf or use_amd_av1_preview:
+        use_compress_amf = (mode == "AV1 Compress" and encoder_choice == "amf")
+
+        # For NVENC/AMF modes or AV1 Balanced/Compress with AMD hardware, use adaptive plan
+        if mode in adaptive_modes or use_balanced_amf or use_compress_amf or use_amd_av1_preview:
             info_ext = ffprobe_info_extended(input_path)
             filters_for_est = smart_filters
             if filters_for_est is None:
@@ -1494,6 +1545,19 @@ def estimate_output_size(input_path: str, mode: str, resolution: str, input_bitr
                 sharpening_profile,
                 encoder=encoder_choice
             )
+
+            # Apply AV1 Compress mode adjustments for accurate estimation
+            if mode == "AV1 Compress" and encoder_choice == "amf":
+                plan["params"]["cq"] = 31  # Higher CQ = more compression
+                if width >= 1920:
+                    plan["params"]["b_v"] = 1_900_000  # 1.9 Mbps for 1080p
+                    plan["params"]["maxrate"] = int(plan["params"]["b_v"] * 1.5)
+                    plan["params"]["bufsize"] = int(plan["params"]["maxrate"] * 2)
+                elif width >= 1280:
+                    plan["params"]["b_v"] = 1_200_000  # 1.2 Mbps for 720p
+                    plan["params"]["maxrate"] = int(plan["params"]["b_v"] * 1.5)
+                    plan["params"]["bufsize"] = int(plan["params"]["maxrate"] * 2)
+
             base_video_bitrate = estimate_output_from_params(info_ext, plan["params"]) * 8 / max(duration, 1)
             base_video_bitrate /= 1000  # Convert to kbps for consistency
             audio_bitrate = 192
@@ -1574,6 +1638,7 @@ def get_smart_audio_bitrate(input_path: str, mode: str) -> Tuple[str, str]:
             bitrate_map = {
                 "AV1 Ultra": "192k",
                 "AV1 Balanced": "160k",
+                "AV1 Compress": "128k",
                 "AV1 Fast": "128k",
                 "NVENC Ultra": "192k",
                 "NVENC Balanced": "160k",
@@ -1589,6 +1654,7 @@ def get_smart_audio_bitrate(input_path: str, mode: str) -> Tuple[str, str]:
         fallback_map = {
             "AV1 Ultra": "192k",
             "AV1 Balanced": "160k",
+            "AV1 Compress": "128k",
             "AV1 Fast": "128k",
             "NVENC Ultra": "160k",
             "NVENC Balanced": "160k",
@@ -2284,7 +2350,7 @@ class EncodingPresets:
     def get_amf_adaptive(resolution: str, source_width: int, source_height: int, input_path: str,
                          smart_filters: str = "", keep_hdr: bool = True, copy_audio: bool = False,
                          user_log: List[str] = None, custom_cq: Optional[int] = None,
-                         sharpening_profile: str = "medium") -> Tuple[List[str], bool, Dict]:
+                         sharpening_profile: str = "medium", mode: str = "") -> Tuple[List[str], bool, Dict]:
         """
         AMD AMF adaptive path shares the same decision logic but emits AMF-friendly flags.
         """
@@ -2332,6 +2398,23 @@ class EncodingPresets:
             "-usage", "transcoding",
         ]
         
+        # Override params for AV1 Compress mode (aggressive compression)
+        is_compress_mode = "compress" in mode.lower()
+        if is_compress_mode and amf_codec == "av1_amf":
+            # Aggressive compression: Higher CQ + Lower bitrate
+            params["cq"] = 31  # Higher CQ = more compression
+            # Reduce bitrate by ~15-20% for 1080p
+            if source_width >= 1920:
+                params["b_v"] = 1_900_000  # 1.9 Mbps (was 2.3 Mbps)
+                params["maxrate"] = int(params["b_v"] * 1.5)  # Looser maxrate for complex scenes
+                params["bufsize"] = int(params["maxrate"] * 2)
+            elif source_width >= 1280:
+                params["b_v"] = 1_200_000  # 1.2 Mbps
+                params["maxrate"] = int(params["b_v"] * 1.5)
+                params["bufsize"] = int(params["maxrate"] * 2)
+            if user_log is not None:
+                user_log.append(f"AV1 Compress: Aggressive mode - CQ={params['cq']}, target={params['b_v']//1000}kbps")
+
         # Pure CQ mode or constrained VBR
         if ENABLE_PURE_CQ_MODE and amf_codec != "av1_amf":
             # Pure CQ for HEVC/H.264 (AV1 needs bitrate target)
@@ -2360,26 +2443,26 @@ class EncodingPresets:
 
         # RDNA 4 OPTIMIZATIONS: AV1 B-frames and enhanced features
         if amf_codec == "av1_amf" and HAS_AMD_RDNA4:
+            # All modes use quality-focused B-frame settings
             cmd.extend([
-                "-bf", "3",                  # NEW: B-frames support (RDNA 4+, max=3)
-                "-b_ref_mode", "middle",     # NEW: Use middle B-frame as reference
-                "-preanalysis", "1",         # Pre-analysis pass for better decisions
-                "-vbaq", "1",                # Variance-based adaptive quantization
-                "-me_half_pel", "1",         # Half-pixel motion estimation
-                "-me_quarter_pel", "1",      # Quarter-pixel motion estimation
+                "-bf", "3",                              # B-frames support (RDNA 4+, max=3)
+                "-preanalysis", "1",                     # Pre-analysis pass
+                "-aq_mode", "caq",                       # Context Adaptive Quantization
+                "-pa_caq_strength", "high",              # High CAQ strength for quality
+                "-pa_taq_mode", "2",                     # Temporal AQ mode 2 (best quality)
+                "-pa_high_motion_quality_boost_mode", "auto",  # High motion boost
             ])
             if user_log is not None:
-                user_log.append("RDNA 4: AV1 B-frames enabled (3 B-frames, middle ref)")
+                user_log.append("RDNA 4: AV1 B-frames + quality optimizations (3 B-frames, CAQ high, TAQ mode 2)")
         elif amf_codec == "av1_amf":
-            # RDNA 3 and older: No B-frames, but enable other optimizations
+            # RDNA 3 and older: No B-frames, but enable quality optimizations
             cmd.extend([
-                "-preanalysis", "1",
-                "-vbaq", "1",
-                "-me_half_pel", "1",
-                "-me_quarter_pel", "1",
+                "-preanalysis", "1",                     # Pre-analysis pass
+                "-aq_mode", "caq",                       # Context Adaptive Quantization
+                "-pa_caq_strength", "medium",            # Medium CAQ strength
             ])
             if user_log is not None:
-                user_log.append("AMD AV1: Standard mode (no B-frames, RDNA <4)")
+                user_log.append("AMD AV1: Standard mode + CAQ (no B-frames, RDNA <4)")
         elif amf_codec == "hevc_amf":
             # HEVC optimizations
             cmd.extend([
@@ -2863,7 +2946,7 @@ class App:
         ttk.Label(mode_inner, text="ENCODING MODE", font=("Segoe UI", 11, "bold"),
                  background=BG_CARD, foreground=ACCENT).pack(anchor="w", pady=(0, 12))
         
-        modes = ["AV1 Ultra", "AV1 Balanced", "AV1 Fast", "NVENC Ultra", "NVENC Balanced", "NVENC Fast"]
+        modes = ["AV1 Ultra", "AV1 Balanced", "AV1 Compress", "AV1 Fast", "NVENC Ultra", "NVENC Balanced", "NVENC Fast"]
         self.combo_mode = ttk.Combobox(mode_inner, textvariable=self.mode,
                                       state="readonly", width=22,
                                       font=("Segoe UI", 11),
@@ -2894,6 +2977,7 @@ class App:
         mode_descriptions = {
             "AV1 Ultra": "Cinema CRF 22 P4 ~12-16fps 70-75% smaller Auto: AMD GPU",
             "AV1 Balanced": "Best Balance CRF 25  P5  ~18-24fps 75-80% smaller Auto: AMD GPU",
+            "AV1 Compress": "Max Compression CRF 31 ~20-28fps 85-90% smaller Auto: AMD GPU",
             "AV1 Fast": "Quick  CRF 28  P8 ~35-45fps 80-85% smaller Auto: AMD GPU",
             "NVENC Ultra": "GPU Nova-Style 3-level adaptive~150fps",
             "NVENC Balanced": "GPU Nova-Style 3-level adaptive ~155fps",
@@ -3155,18 +3239,63 @@ class App:
         self.clear_btn.pack(side="left", expand=True, fill="x")
     
     def _setup_dnd(self):
-        """Setup drag and drop"""
+        """
+        Setup drag and drop
+
+        v5.1.1: Improved error handling for Windows 10 compatibility
+        """
         try:
+            if not DND_OK:
+                print("[DND] tkinterdnd2 not available, drag and drop disabled")
+                return
+
             self.ein.drop_target_register(DND_FILES)
             self.ein.dnd_bind('<<Drop>>', self._on_drop)
-        except:
-            pass
+            print("[DND] Drag and drop initialized successfully")
+        except Exception as e:
+            print(f"[DND] Failed to setup drag and drop: {e}")
+            print("[DND] You can still browse for files using the Browse button")
     
     def _on_drop(self, event):
-        """Handle drag and drop"""
-        files = self.root.tk.splitlist(event.data)
-        if files:
-            self.inp.set(files[0])
+        """
+        Handle drag and drop
+
+        v5.1.2: Fixed Windows path parsing with spaces in filenames
+        """
+        try:
+            # Debug: Show raw event data
+            print(f"[DND] Raw event.data: {repr(event.data)}")
+
+            # Handle different drop event formats (Windows vs Linux)
+            if isinstance(event.data, str):
+                # Use splitlist directly - it correctly handles curly braces
+                # tkinterdnd2 wraps paths with spaces in curly braces: {C:/path/file name.mp4}
+                files = self.root.tk.splitlist(event.data)
+            else:
+                files = [event.data]
+
+            print(f"[DND] Parsed files list: {files}")
+
+            if files:
+                # Normalize path (remove curly braces, quotes, extra spaces)
+                file_path = str(files[0]).strip().strip('{}').strip('"').strip("'").strip()
+
+                print(f"[DND] Normalized path: {file_path}")
+                print(f"[DND] File exists: {os.path.exists(file_path)}")
+                print(f"[DND] Is file: {os.path.isfile(file_path)}")
+                print(f"[DND] Is directory: {os.path.isdir(file_path)}")
+
+                if os.path.isfile(file_path):
+                    self.inp.set(file_path)
+                    print(f"[DND] ✓ File dropped successfully: {file_path}")
+                else:
+                    print(f"[DND] ✗ Invalid file path: {file_path}")
+                    if os.path.isdir(file_path):
+                        print(f"[DND]   This is a directory, not a file. Please drop a video file.")
+        except Exception as e:
+            print(f"[DND] Error handling drop: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _on_auto_mode_toggle(self):
         """Handle auto-mode toggle"""
@@ -3179,7 +3308,7 @@ class App:
         """Ensure AV1 Balanced remains the default unless the user picks something else."""
         current = (self.mode.get() or "").strip()
         valid_modes = {
-            "AV1 Ultra", "AV1 Balanced", "AV1 Fast",
+            "AV1 Ultra", "AV1 Balanced", "AV1 Compress", "AV1 Fast",
             "NVENC Ultra", "NVENC Balanced", "NVENC Fast"
         }
         if current and current in valid_modes:
@@ -3633,155 +3762,303 @@ class App:
             self.output_is_auto = True
     
     def _browse_batch(self):
-        """Browse for batch files"""
-        files = filedialog.askopenfilenames(
-            title="Select Videos for Batch Processing",
+        """
+        Enhanced batch processing with drag-and-drop support
+
+        v5.1.3: Major upgrade - drag & drop files, per-file mode selection, delete originals
+        """
+        # Initial file selection (optional - can also drag and drop in dialog)
+        initial_files = filedialog.askopenfilenames(
+            title="Select Videos for Batch Processing (or cancel to drag & drop)",
             filetypes=[
-                ("Video files", "*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpg *.mpeg"),
+                ("Video files", "*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpg *.mpeg *.mts *.m2ts"),
                 ("All files", "*.*")
             ]
         )
-        
-        if not files:
-            return
-        
-        # Show output location dialog
-        output_dialog = tk.Toplevel(self.root)
-        output_dialog.title("Batch Output Location")
-        output_dialog.geometry("500x250")
-        output_dialog.configure(bg=BG_DARK)
-        output_dialog.transient(self.root)
-        output_dialog.grab_set()
-        
+
+        # Show enhanced dialog (works even if no files selected - can drag & drop there)
+        self._show_enhanced_batch_dialog(list(initial_files) if initial_files else [])
+
+    def _show_enhanced_batch_dialog(self, initial_files: List[str]):
+        """
+        Show enhanced batch dialog with drag-and-drop and per-file mode selection
+
+        v5.1.3: New interactive batch queue builder
+        """
+        # Create dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Batch Queue Builder")
+        dialog.geometry("900x600")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
         # Center dialog
-        output_dialog.update_idletasks()
-        x = (output_dialog.winfo_screenwidth() // 2) - (500 // 2)
-        y = (output_dialog.winfo_screenheight() // 2) - (250 // 2)
-        output_dialog.geometry(f"+{x}+{y}")
-        
-        dialog_frame = tk.Frame(output_dialog, bg=BG_DARK)
-        dialog_frame.pack(fill="both", expand=True, padx=12, pady=20)
-        
-        ttk.Label(dialog_frame,
-                 text=f"Adding {len(files)} videos to queue",
-                 font=("Segoe UI", 10, "bold"),
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (900 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (600 // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        # Store batch items {file_path: {"mode": str, "delete_original": bool}}
+        batch_items = {}
+
+        for f in initial_files:
+            batch_items[f] = {
+                "mode": normalize_mode(self.mode.get()),
+                "delete_original": False
+            }
+
+        # Main frame
+        main_frame = tk.Frame(dialog, bg=BG_DARK)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Header
+        header = tk.Frame(main_frame, bg=BG_DARK)
+        header.pack(fill="x", pady=(0, 15))
+
+        ttk.Label(header,
+                 text="BATCH QUEUE BUILDER",
+                 font=("Segoe UI", 14, "bold"),
                  foreground=ACCENT,
-                 background=BG_DARK).pack(pady=(0, 8))
-        
-        ttk.Label(dialog_frame,
-                 text="Where should the encoded files be saved?",
-                 font=("Segoe UI", 10),
-                 foreground=TEXT_BRIGHT,
-                 background=BG_DARK).pack(pady=(0, 8))
-        
-        # Radio buttons
-        output_mode = tk.StringVar(value="source")
-        
-        radio_frame = tk.Frame(dialog_frame, bg=BG_CARD,
-                              highlightbackground=BORDER_BRIGHT, highlightthickness=2)
-        radio_frame.pack(fill="x", pady=(0, 8))
-        
-        ttk.Radiobutton(radio_frame,
-                       text="Same folder as source files",
-                       variable=output_mode,
-                       value="source").pack(anchor="w", padx=10, pady=(10, 5))
-        
-        ttk.Radiobutton(radio_frame,
-                       text="Custom output folder (all files)",
-                       variable=output_mode,
-                       value="custom").pack(anchor="w", padx=10, pady=(5, 10))
-        
-        # Custom folder selection
-        custom_folder = tk.StringVar()
-        
-        folder_frame = tk.Frame(dialog_frame, bg=BG_DARK)
-        folder_frame.pack(fill="x", pady=(0, 8))
-        
-        folder_entry = tk.Entry(folder_frame, textvariable=custom_folder,
-                               bg=BG_INPUT, fg=TEXT_BRIGHT,
-                               font=("Segoe UI", 9), state="disabled")
-        folder_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        
-        def browse_folder():
-            folder = filedialog.askdirectory(title="Select Output Folder")
-            if folder:
-                custom_folder.set(folder)
-        
-        folder_btn = ttk.Button(folder_frame, text="Browse",
-                               command=browse_folder,
-                               style="Secondary.TButton",
-                               state="disabled")
-        folder_btn.pack(side="left")
-        
-        def on_mode_change():
-            if output_mode.get() == "custom":
-                folder_entry.config(state="normal")
-                folder_btn.config(state="normal")
-            else:
-                folder_entry.config(state="disabled")
-                folder_btn.config(state="disabled")
-        
-        output_mode.trace_add("write", lambda *args: on_mode_change())
-        
-        # OK/Cancel buttons
-        btn_frame = tk.Frame(dialog_frame, bg=BG_DARK)
-        btn_frame.pack(fill="x")
-        
+                 background=BG_DARK).pack(side="left")
+
+        count_label = ttk.Label(header,
+                               text=f"{len(batch_items)} files",
+                               font=("Segoe UI", 10),
+                               foreground=TEXT_DIM,
+                               background=BG_DARK)
+        count_label.pack(side="left", padx=(15, 0))
+
+        # Drag & Drop Area
+        drop_frame = tk.Frame(main_frame, bg=BG_CARD,
+                             highlightbackground=ACCENT, highlightthickness=2)
+        drop_frame.pack(fill="x", pady=(0, 15))
+
+        drop_label = ttk.Label(drop_frame,
+                              text="Drag & Drop Video Files Here  or  Click 'Add Files' button",
+                              font=("Segoe UI", 11),
+                              foreground=TEXT_DIM,
+                              background=BG_CARD)
+        drop_label.pack(pady=20)
+
+        # Setup drag and drop for drop area
+        if DND_OK:
+            try:
+                drop_frame.drop_target_register(DND_FILES)
+
+                def on_drop_files(event):
+                    try:
+                        files = dialog.tk.splitlist(event.data)
+                        for file_path in files:
+                            file_path = file_path.strip('{}').strip('"').strip("'").strip()
+                            if os.path.isfile(file_path) and file_path.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.mts', '.m2ts')):
+                                if file_path not in batch_items:
+                                    batch_items[file_path] = {
+                                        "mode": normalize_mode(self.mode.get()),
+                                        "delete_original": False
+                                    }
+                        update_file_list()
+                        count_label.config(text=f"{len(batch_items)} files")
+                    except Exception as e:
+                        print(f"[BATCH] Error dropping files: {e}")
+
+                drop_frame.dnd_bind('<<Drop>>', on_drop_files)
+            except Exception as e:
+                print(f"[BATCH] Could not setup drag and drop: {e}")
+
+        # Buttons row
+        btn_row = tk.Frame(main_frame, bg=BG_DARK)
+        btn_row.pack(fill="x", pady=(0, 15))
+
+        def add_files_click():
+            files = filedialog.askopenfilenames(
+                title="Select Videos to Add",
+                filetypes=[
+                    ("Video files", "*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpg *.mpeg *.mts *.m2ts"),
+                    ("All files", "*.*")
+                ]
+            )
+            for f in files:
+                if f not in batch_items:
+                    batch_items[f] = {
+                        "mode": normalize_mode(self.mode.get()),
+                        "delete_original": False
+                    }
+            update_file_list()
+            count_label.config(text=f"{len(batch_items)} files")
+
+        ttk.Button(btn_row, text="Add Files", command=add_files_click,
+                  style="TButton").pack(side="left", padx=(0, 10))
+
+        def clear_all():
+            batch_items.clear()
+            update_file_list()
+            count_label.config(text=f"{len(batch_items)} files")
+
+        ttk.Button(btn_row, text="Clear All", command=clear_all,
+                  style="Secondary.TButton").pack(side="left")
+
+        # Global delete original checkbox
+        global_delete_var = tk.BooleanVar(value=False)
+
+        def toggle_all_delete():
+            for item_data in batch_items.values():
+                item_data["delete_original"] = global_delete_var.get()
+            update_file_list()
+
+        delete_frame = tk.Frame(btn_row, bg=BG_DARK)
+        delete_frame.pack(side="right")
+
+        delete_check = ttk.Checkbutton(delete_frame,
+                                      text="Delete original files after successful encoding",
+                                      variable=global_delete_var,
+                                      command=toggle_all_delete)
+        delete_check.pack(side="left")
+
+        # File list with scrollbar
+        list_frame = tk.Frame(main_frame, bg=BG_INPUT,
+                             highlightbackground=ACCENT, highlightthickness=2)
+        list_frame.pack(fill="both", expand=True, pady=(0, 15))
+
+        # Canvas for scrolling
+        canvas = tk.Canvas(list_frame, bg=BG_INPUT, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG_INPUT)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Available modes
+        modes = ["AV1 Ultra", "AV1 Balanced", "AV1 Compress", "AV1 Fast",
+                 "NVENC Ultra", "NVENC Balanced", "NVENC Fast"]
+
+        def update_file_list():
+            # Clear existing widgets
+            for widget in scrollable_frame.winfo_children():
+                widget.destroy()
+
+            if not batch_items:
+                ttk.Label(scrollable_frame,
+                         text="No files added yet. Drag & drop files or click 'Add Files'",
+                         font=("Segoe UI", 10),
+                         foreground=TEXT_DIM,
+                         background=BG_INPUT).pack(pady=50)
+                return
+
+            # Header row
+            header_row = tk.Frame(scrollable_frame, bg=BG_CARD)
+            header_row.pack(fill="x", padx=5, pady=(5, 2))
+
+            ttk.Label(header_row, text="File", width=40, font=("Segoe UI", 9, "bold"),
+                     background=BG_CARD, foreground=TEXT_BRIGHT).pack(side="left", padx=5)
+            ttk.Label(header_row, text="Mode", width=15, font=("Segoe UI", 9, "bold"),
+                     background=BG_CARD, foreground=TEXT_BRIGHT).pack(side="left", padx=5)
+            ttk.Label(header_row, text="Delete Original", width=12, font=("Segoe UI", 9, "bold"),
+                     background=BG_CARD, foreground=TEXT_BRIGHT).pack(side="left", padx=5)
+            ttk.Label(header_row, text="", width=8, font=("Segoe UI", 9, "bold"),
+                     background=BG_CARD).pack(side="left")
+
+            # File rows
+            for file_path, item_data in batch_items.items():
+                row = tk.Frame(scrollable_frame, bg=BG_CARD,
+                              highlightbackground=BORDER, highlightthickness=1)
+                row.pack(fill="x", padx=5, pady=2)
+
+                # Filename
+                filename = os.path.basename(file_path)
+                if len(filename) > 50:
+                    filename = filename[:47] + "..."
+
+                file_label = ttk.Label(row, text=filename, width=40,
+                                      background=BG_CARD, foreground=TEXT_BRIGHT)
+                file_label.pack(side="left", padx=5, pady=8)
+
+                # Mode dropdown
+                mode_var = tk.StringVar(value=item_data["mode"])
+
+                def make_mode_change(fp=file_path, mv=mode_var):
+                    def on_change(*args):
+                        batch_items[fp]["mode"] = normalize_mode(mv.get())
+                    return on_change
+
+                mode_var.trace_add("write", make_mode_change())
+
+                mode_combo = ttk.Combobox(row, textvariable=mode_var, values=modes,
+                                         state="readonly", width=15)
+                mode_combo.pack(side="left", padx=5)
+
+                # Delete checkbox
+                delete_var = tk.BooleanVar(value=item_data["delete_original"])
+
+                def make_delete_change(fp=file_path, dv=delete_var):
+                    def on_change():
+                        batch_items[fp]["delete_original"] = dv.get()
+                    return on_change
+
+                delete_check = ttk.Checkbutton(row, variable=delete_var,
+                                              command=make_delete_change())
+                delete_check.pack(side="left", padx=40)
+
+                # Remove button
+                def make_remove(fp=file_path):
+                    def remove():
+                        del batch_items[fp]
+                        update_file_list()
+                        count_label.config(text=f"{len(batch_items)} files")
+                    return remove
+
+                ttk.Button(row, text="Remove", command=make_remove(),
+                          style="Cancel.TButton").pack(side="left", padx=5)
+
+        update_file_list()
+
+        # Bottom buttons
+        bottom_frame = tk.Frame(main_frame, bg=BG_DARK)
+        bottom_frame.pack(fill="x")
+
         result = {"confirmed": False}
-        
+
         def on_ok():
-            if output_mode.get() == "custom" and not custom_folder.get():
-                messagebox.showerror("Error", "Please select an output folder")
+            if not batch_items:
+                messagebox.showwarning("No Files", "Please add at least one video file")
                 return
             result["confirmed"] = True
-            result["mode"] = output_mode.get()
-            result["folder"] = custom_folder.get()
-            output_dialog.destroy()
-        
+            result["items"] = batch_items
+            dialog.destroy()
+
         def on_cancel():
-            output_dialog.destroy()
-        
-        ttk.Button(btn_frame, text="Add to Queue", command=on_ok,
+            dialog.destroy()
+
+        ttk.Button(bottom_frame, text="Add to Queue", command=on_ok,
                   style="TButton").pack(side="left", expand=True, fill="x", padx=(0, 10))
-        
-        ttk.Button(btn_frame, text="Cancel", command=on_cancel,
+
+        ttk.Button(bottom_frame, text="Cancel", command=on_cancel,
                   style="Cancel.TButton").pack(side="left", expand=True, fill="x")
-        
-        self.root.wait_window(output_dialog)
-        
+
+        self.root.wait_window(dialog)
+
         if not result["confirmed"]:
             return
-        
+
         # Add files to queue
-        current_auto_mode = self.auto_mode.get()
-        
-        for f in files:
-            # Auto-select mode if enabled
-            if current_auto_mode:
-                try:
-                    info = ffprobe_info_extended(f)
-                    file_mode = smart_select_preset(info, HAS_HEVC_NVENC, HAS_LIBSVTAV1, self.error_log)
-                    file_mode = normalize_mode(file_mode)
-                except:
-                    file_mode = normalize_mode(self.mode.get())
-            else:
-                file_mode = normalize_mode(self.mode.get())
-            
-            # Generate output path
-            if result["mode"] == "source":
-                base = os.path.splitext(f)[0]
-                ext = ".mp4"
-                output = f"{base}_{file_mode.replace(' ', '_')}{ext}"
-            else:
-                filename = os.path.basename(f)
-                base = os.path.splitext(filename)[0]
-                ext = ".mp4"
-                output = os.path.join(result["folder"], f"{base}_{file_mode.replace(' ', '_')}{ext}")
-            
+        for file_path, item_data in result["items"].items():
+            # Generate output path (same folder as source)
+            base = os.path.splitext(file_path)[0]
+            ext = ".mp4"
+            output = f"{base}_{item_data['mode'].replace(' ', '_')}{ext}"
+
             # Estimate size
             try:
-                info = ffprobe_info(f)
-                info_ext = ffprobe_info_extended(f)
+                info = ffprobe_info(file_path)
+                info_ext = ffprobe_info_extended(file_path)
                 tmp_log: List[str] = []
                 filters_for_est = get_smart_filters(info_ext, self.keep_hdr.get(), tmp_log)
                 copy_audio = should_copy_audio(info_ext, tmp_log)
@@ -3795,8 +4072,8 @@ class App:
                 else:
                     encoder_hint = "auto"
                 est_size = estimate_output_size(
-                    f,
-                    file_mode,
+                    file_path,
+                    item_data["mode"],
                     self.resolution.get(),
                     info["bitrate"],
                     keep_hdr=self.keep_hdr.get(),
@@ -3808,20 +4085,21 @@ class App:
                 )
             except:
                 est_size = 0
-            
+
             # Add to queue
-            item = QueueItem(
-                input_path=f,
+            queue_item = QueueItem(
+                input_path=file_path,
                 output_path=output,
-                mode=file_mode,
+                mode=item_data["mode"],
                 resolution=self.resolution.get(),
                 two_pass=self.two_pass.get(),
-                estimated_size=est_size
+                estimated_size=est_size,
+                delete_original=item_data["delete_original"]
             )
-            self.queue.append(item)
-        
+            self.queue.append(queue_item)
+
         self._update_queue_display()
-    
+
     def _browse_output(self):
         """Browse for output file"""
         f = filedialog.asksaveasfilename(
@@ -4052,7 +4330,7 @@ class App:
                 preset_cmd, use_hwaccel, plan_meta = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
                 self._last_hw_plan = plan_meta
             else:
@@ -4079,7 +4357,7 @@ class App:
                 preset_cmd, use_hwaccel, _ = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
             else:
                 use_amd_av1_preview = False
@@ -4091,7 +4369,12 @@ class App:
                     self.keep_hdr.get(), av1_tune_val, sharpening_val)
             elif mode == "AV1 Balanced":
                 preset_cmd, use_hwaccel = EncodingPresets.get_av1_balanced(
-                    resolution, self.source_width, self.source_height, smart_filters, 
+                    resolution, self.source_width, self.source_height, smart_filters,
+                    self.keep_hdr.get(), av1_tune_val, sharpening_val)
+            elif mode == "AV1 Compress":
+                # Use balanced preset as base for CPU fallback (actual compression happens in AMF)
+                preset_cmd, use_hwaccel = EncodingPresets.get_av1_balanced(
+                    resolution, self.source_width, self.source_height, smart_filters,
                     self.keep_hdr.get(), av1_tune_val, sharpening_val)
             elif mode == "AV1 Fast":
                 preset_cmd, use_hwaccel = EncodingPresets.get_av1_fast(
@@ -4126,7 +4409,7 @@ class App:
                 preset_cmd, use_hwaccel, _ = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
             else:
                 preset_cmd, use_hwaccel, _ = EncodingPresets.get_nvenc_adaptive(
@@ -4344,6 +4627,7 @@ class App:
         self.input_fps = info["fps"]
         self.source_width = info["width"]
         self.source_height = info["height"]
+        print(f"[PROGRESS] Video duration set: {self.total_duration:.2f}s ({self.total_duration/60:.1f} min), {self.input_fps:.2f} fps, {self.source_width}x{self.source_height}")
         self.input_size = os.path.getsize(inp)
         
         # Save resume state
@@ -4408,6 +4692,7 @@ class App:
         self.input_fps = info["fps"]
         self.input_size = os.path.getsize(self.current_queue_item.input_path)
         self.source_width = info["width"]
+        print(f"[PROGRESS] Queue item duration set: {self.total_duration:.2f}s ({self.total_duration/60:.1f} min), {self.input_fps:.2f} fps")
         self.source_height = info["height"]
         self.estimated_output_size = self.current_queue_item.estimated_size
         
@@ -4513,7 +4798,7 @@ class App:
                 preset_cmd, use_hwaccel, plan_meta = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
                 self._last_hw_plan = plan_meta
             else:
@@ -4540,7 +4825,7 @@ class App:
                 preset_cmd, use_hwaccel, _ = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
             else:
                 use_amd_av1_preview = False
@@ -4552,7 +4837,12 @@ class App:
                     self.keep_hdr.get(), av1_tune_val, sharpening_val)
             elif mode == "AV1 Balanced":
                 preset_cmd, use_hwaccel = EncodingPresets.get_av1_balanced(
-                    resolution, self.source_width, self.source_height, smart_filters, 
+                    resolution, self.source_width, self.source_height, smart_filters,
+                    self.keep_hdr.get(), av1_tune_val, sharpening_val)
+            elif mode == "AV1 Compress":
+                # Use balanced preset as base for CPU fallback (actual compression happens in AMF)
+                preset_cmd, use_hwaccel = EncodingPresets.get_av1_balanced(
+                    resolution, self.source_width, self.source_height, smart_filters,
                     self.keep_hdr.get(), av1_tune_val, sharpening_val)
             elif mode == "AV1 Fast":
                 preset_cmd, use_hwaccel = EncodingPresets.get_av1_fast(
@@ -4592,7 +4882,7 @@ class App:
                 preset_cmd, use_hwaccel, plan_meta = EncodingPresets.get_amf_adaptive(
                     resolution, self.source_width, self.source_height, inp,
                     smart_filters, self.keep_hdr.get(), copy_audio, self.error_log,
-                    custom_cq_val, sharpening_val
+                    custom_cq_val, sharpening_val, mode
                 )
             elif not use_amd_av1_hardware:  # nvenc or cpu fallback (skip if already using AMD AV1)
                 preset_cmd, use_hwaccel, plan_meta = EncodingPresets.get_nvenc_adaptive(
@@ -4654,19 +4944,22 @@ class App:
                     return
             
             self.error_log.append("")
+
+            # v5.1.1: Log adaptive parameters only for hardware modes (plan_meta exists)
+            # CPU-based encoding doesn't use plan_meta, and that's okay
             if plan_meta:
                 pp = plan_meta["public_params"]
                 filt = plan_meta["filter_strings"]
                 info_for_log = plan_meta["info"]
-                
+
                 # Log encoder type
                 encoder_display = "AMD AMF" if encoder_name == "amf" else "NVIDIA NVENC" if encoder_name == "nvenc" else "CPU"
                 self.error_log.append(f"Ã°Å¸Å¡â‚¬ {encoder_display} ADAPTIVE PARAMETERS:")
-                
+
                 # Log codec if AMF
                 if encoder_name == "amf" and "amf_codec" in plan_meta:
                     self.error_log.append(f"   Codec: {plan_meta['amf_codec'].upper()}")
-                
+
                 self.error_log.append(
                     f"   Source: {info_for_log['width']}x{info_for_log['height']} @ "
                     f"{info_for_log.get('bitrate_bps', info_for_log.get('bitrate', 0)*1000)/1_000_000:.2f} Mbps, "
@@ -4683,9 +4976,11 @@ class App:
                     f"   Filters: {plan_meta['filter_profile']} => {filt['denoise']}{filter_suffix}"
                 )
                 self.error_log.append("")
-        else:
-            self.root.after(0, self._show_error, "Unknown encoding mode")
-            return
+            else:
+                # CPU-based encoding mode (no plan_meta) - this is valid
+                self.error_log.append(f"Ã°Å¸Å¡â‚¬ CPU ENCODING MODE: {mode}")
+                self.error_log.append(f"   Using software encoder (libsvtav1/libx264)")
+                self.error_log.append("")
         
         # Handle container format for AV1 AMF
         if encoder_name == "amf" and plan_meta and plan_meta.get("amf_codec") == "av1_amf":
@@ -4916,11 +5211,21 @@ class App:
             self._update_queue_display()
     
     def _auto_save_log(self, outp: str, out_size: int, reduction: float):
-        """Automatically save encoding log"""
+        """
+        Automatically save encoding log
+
+        v5.1.3: Save all logs in centralized logs/ folder in script directory
+        """
         try:
-            output_dir = os.path.dirname(outp) if os.path.dirname(outp) else '.'
+            # Create logs folder in script directory
+            script_dir = os.path.dirname(os.path.abspath(__file__)) if hasattr(__builtins__, '__file__') else os.getcwd()
+            logs_dir = os.path.join(script_dir, "logs")
+            os.makedirs(logs_dir, exist_ok=True)
+
+            # Generate log filename with timestamp
             output_name = os.path.splitext(os.path.basename(outp))[0]
-            log_filename = os.path.join(output_dir, f"{output_name}_encoding_log.txt")
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            log_filename = os.path.join(logs_dir, f"{output_name}_{timestamp}_log.txt")
             
             log_content = []
             log_content.append("=" * 80)
@@ -5017,8 +5322,8 @@ class App:
                     )
                     save_history_entry(history_entry)
                     
-                    # NEW v5.0: Delete source file if enabled
-                    if self.delete_source_after.get():
+                    # v5.1.3: Delete original file if enabled for this queue item
+                    if self.current_queue_item.delete_original:
                         if os.path.exists(self.current_queue_item.input_path) and os.path.exists(outp):
                             try:
                                 os.remove(self.current_queue_item.input_path)
