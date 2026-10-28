@@ -5,7 +5,7 @@
 Compress your videos to **35-45% smaller sizes** while maintaining excellent visual quality. Supports NVIDIA NVENC, AMD AMF (with RDNA 4 AV1 B-frames), and CPU encoding with intelligent grain preservation and HDR tone mapping.
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-6.0+-orange.svg)](https://ffmpeg.org/)
 
 ---
@@ -98,8 +98,10 @@ Compress your videos to **35-45% smaller sizes** while maintaining excellent vis
 ### **1. Install Python Dependencies**
 
 ```bash
-pip install tkinter psutil tkinterdnd2
+pip install psutil tkinterdnd2
 ```
+
+`tkinter` ships with Python (on Debian/Ubuntu: `sudo apt install python3-tk`). `tkinterdnd2` is optional; without it drag-and-drop is disabled and files are added with **Add Files** / **Browse**.
 
 ### **2. Install FFmpeg**
 
@@ -139,6 +141,8 @@ cd GUI-video-compressor-python
 python VideoCompressor_v5_1_Updated.py
 ```
 
+The file name still says `v5_1`; the app itself is v6.0 (`VERSION` in the script, shown in the window title).
+
 ---
 
 ## 🎮 Usage Guide
@@ -167,23 +171,37 @@ python VideoCompressor_v5_1_Updated.py
    - Sharpening: Light, Medium, Heavy, or Off
 
 5. **Start encoding**
-   - Click "Start Encoding"
+   - Click **START** (or press Ctrl+S)
    - Monitor progress in real-time
    - View statistics (speed, ETA, file size)
 
 ### **Batch Processing**
 
-1. Enable **"Add to Queue"** checkbox
-2. Select multiple videos one by one
-3. Click **"Process Queue"** to encode all files
-4. Enable **"Auto-shutdown"** to shut down PC when done (optional)
+1. Click **+ Batch** to open the **Batch Queue Builder**.
+2. Drag & drop videos onto it, or click **Add Files**. Remove or clear entries as needed.
+3. Optionally tick **Delete original files after successful encoding** (per file in the *Delete Original* column); you are asked to confirm before an original is deleted.
+4. Click **Add to Queue**, then **START**: the app asks *Process N videos in queue?* and encodes them one by one.
+5. Tick **Shut down PC after encoding (15s)** to power off when the queue finishes (optional).
 
 ### **Save/Load Profiles**
 
 1. Configure your preferred settings
-2. Click **"Save Profile"**
-3. Name your profile (e.g., "1080p High Quality")
-4. Load later from dropdown menu
+2. Save a profile and give it a name (e.g., "1080p High Quality")
+3. Load it later from the **Load Profile** window
+
+Profiles are stored in `encoding_profiles.json` and history in `encoding_history.json` next to the script; an interrupted run's state is kept in `encoding_state.pkl`.
+
+### **Keyboard shortcuts**
+
+| Key | Action |
+|---|---|
+| Ctrl+O | Open a file |
+| Ctrl+S | Start encoding |
+| Ctrl+Q | Add the current file to the queue |
+| Ctrl+H | Encoding history |
+| Ctrl+P | Toggle theme |
+| F5 | Preview |
+| Esc | Cancel the running encode |
 
 ---
 
@@ -225,22 +243,28 @@ Higher CQ = lower quality, smaller files
 
 ### **Advanced Options**
 
+Line numbers below refer to `VideoCompressor_v5_1_Updated.py` as of v6.0.
+
 #### **Pure CQ Mode** (v6.0)
-Edit line 147 in the script:
+Edit line 204 in the script:
 ```python
 ENABLE_PURE_CQ_MODE = True  # No bitrate constraints (recommended)
 # Set to False for traditional constrained VBR
 ```
 
 #### **VBR Constraints**
-Edit lines 140-145:
+Edit lines 197-198:
 ```python
-DEFAULT_MAXRATE_MULT = 1.8   # Maxrate = target × 1.8
-DEFAULT_BUFSIZE_MULT = 3.6   # Bufsize = maxrate × 2
+DEFAULT_MAXRATE_MULT = 1.8                        # Maxrate = target × 1.8
+DEFAULT_BUFSIZE_MULT = DEFAULT_MAXRATE_MULT * 2   # Bufsize = 2 × maxrate (3.6 × target)
 ```
 
 #### **Film Grain Detection**
-Automatically enabled. To disable, edit line 1889:
+Automatically enabled. To disable, replace line 2032:
+```python
+has_grain, grain_strength = detect_film_grain(input_path, duration)
+```
+with:
 ```python
 has_grain, grain_strength = False, 0.0  # Force disable
 ```
@@ -278,7 +302,7 @@ rocm-smi --showproductname
 
 ### **Output file is larger than input**
 - Source already efficiently compressed (HEVC/AV1)
-- Enable "Skip if savings <5%" option
+- Enable the "Skip if savings <3%" option
 - Increase CQ value (more compression)
 - Check logs for "skip" messages
 
@@ -402,6 +426,12 @@ libx265: CRF mode with slow/medium preset
 
 ## 📝 Changelog
 
+### **2025-11-15 (v6.0 updates)**
+- Batch Queue Builder with drag-and-drop and optional deletion of originals after a successful encode
+- Fixed Windows drag-and-drop paths containing spaces
+- Fixed size estimation accuracy and progress bar issues
+- Fixed mode selection
+
 ### **v6.0 (2025-11) - Aggressive Size/Quality Optimization**
 - 🎯 35-45% smaller files with maintained quality
 - 🎨 Film grain detection and preservation
@@ -451,7 +481,7 @@ Contributions are welcome! Please:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Intended to be MIT-licensed. No `LICENSE` file is committed yet; add one to make the terms explicit.
 
 ---
 
